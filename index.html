@@ -114,9 +114,7 @@
         <h2>2. Manual Controls</h2>
         <div id="controls">
             <button id="getPlan">1. Generate Plan</button>
-            <button id="getCode" disabled>2. Generate Code</button>
-            <button id="reviewCode" disabled>3. Review Code</button>
-            <button id="applyCode" disabled>4. Apply & Evolve</button>
+            <button id="getCode" disabled>2. Generate & Evolve</button>
         </div>
 
         <h2>3. Autopilot</h2>
@@ -129,9 +127,6 @@
 
         <h2>Proposed Code</h2>
         <textarea id="newCode" readonly></textarea>
-
-        <h2>Code Review</h2>
-        <div id="review-output" class="output-area">No review yet.</div>
 
         <h2>Current Source Code</h2>
         <textarea id="currentCode" readonly></textarea>
@@ -200,12 +195,9 @@
             prompt: document.getElementById('prompt'),
             getPlanBtn: document.getElementById('getPlan'),
             getCodeBtn: document.getElementById('getCode'),
-            reviewCodeBtn: document.getElementById('reviewCode'),
-            applyCodeBtn: document.getElementById('applyCode'),
             autopilotBtn: document.getElementById('autopilot'),
             planOutput: document.getElementById('plan-output'),
             newCode: document.getElementById('newCode'),
-            reviewOutput: document.getElementById('review-output'),
             currentCode: document.getElementById('currentCode'),
             ipfsStatus: document.getElementById('ipfs-status'),
             ipfsVerified: document.getElementById('ipfs-verified'),
@@ -231,8 +223,6 @@
             // Add event listeners
             dom.getPlanBtn.addEventListener('click', handleGetPlan);
             dom.getCodeBtn.addEventListener('click', handleGetCode);
-            dom.reviewCodeBtn.addEventListener('click', handleReviewCode);
-            dom.applyCodeBtn.addEventListener('click', handleApplyCode);
             dom.autopilotBtn.addEventListener('click', handleAutopilot);
 
             // Initialize IPFS
@@ -485,46 +475,13 @@ New Code:`;
                 // Clean the result to remove potential markdown backticks
                 state.newCode = result.replace(/^```html\n/, '').replace(/\n```$/, '');
                 dom.newCode.value = state.newCode;
-                dom.reviewCodeBtn.disabled = false;
+                // Directly apply the new code
+                await handleApplyCode();
+            } else {
+                // Re-enable the button if code generation fails
+                dom.getCodeBtn.disabled = false;
+                dom.getCodeBtn.textContent = '2. Generate & Evolve';
             }
-
-            dom.getCodeBtn.disabled = false;
-            dom.getCodeBtn.textContent = '2. Generate Code';
-        }
-
-        async function handleReviewCode() {
-            dom.reviewCodeBtn.disabled = true;
-            dom.reviewCodeBtn.textContent = 'Reviewing...';
-
-            const reviewPrompt = `You are a world-class code reviewer. Review the "New Code" and check if it correctly implements the "Plan" and doesn't introduce any obvious bugs. The "Original Code" is provided for context. Provide a short, concise review. If the code looks good, say "LGTM!" (Looks Good To Me!).
-
-Plan:
-${state.plan}
-
-Original Code:
-\`\`\`html
-${state.currentCode}
-\`\`\`
-
-New Code:
-\`\`\`html
-${state.newCode}
-\`\`\`
-
-Review:`;
-
-            const result = await callGeminiWithFallback(reviewPrompt);
-            if (result && !result.error) {
-                state.review = result;
-                dom.reviewOutput.textContent = state.review;
-                // A simple check to see if the review is positive
-                if (state.review.toLowerCase().includes('lgtm')) {
-                    dom.applyCodeBtn.disabled = false;
-                }
-            }
-
-            dom.reviewCodeBtn.disabled = false;
-            dom.reviewCodeBtn.textContent = '3. Review Code';
         }
 
         async function handleApplyCode() {
