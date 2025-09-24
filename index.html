@@ -180,6 +180,17 @@
             <p><strong>Connected Peers:</strong> <span id="connections-count">0</span></p>
         </div>
 
+        <div id="p2p-collaboration" style="border: 1px solid #ccc; padding: 10px; margin-bottom: 20px; border-radius: 5px;">
+            <h2>P2P Code Collaboration</h2>
+            <button id="requestCodeBtn">Request Code from Peers</button>
+            <button id="shareCodeBtn">Share My Code with Peers</button>
+            <h3>Incoming Proposals</h3>
+            <div id="proposals-container" class="output-area">
+                <!-- Proposals will be dynamically added here -->
+                <p>No proposals yet.</p>
+            </div>
+        </div>
+
         <h2>Plan</h2>
         <div id="plan-output" class="output-area">No plan generated yet.</div>
 
@@ -258,6 +269,9 @@
                 statusText: document.getElementById('p2p-status-text'),
                 peerId: document.getElementById('peer-id'),
                 connectionsCount: document.getElementById('connections-count'),
+                requestCodeBtn: document.getElementById('requestCodeBtn'),
+                shareCodeBtn: document.getElementById('shareCodeBtn'),
+                proposalsContainer: document.getElementById('proposals-container'),
             },
         };
 
@@ -363,10 +377,31 @@
                     state.readyPeers.add(peerId);
                 },
                 onRoomDataReceived: (peerId, data) => {
-                    if (data.type === 'llm-request') {
-                        handleLlmRequest(peerId, data.payload);
-                    } else if (data.type === 'llm-response') {
-                        handleLlmResponse(data.payload);
+                    console.log(`Received data of type ${data.type} from peer ${peerId.slice(-6)}`);
+                    switch (data.type) {
+                        case 'llm-request':
+                            handleLlmRequest(peerId, data.payload);
+                            break;
+                        case 'llm-response':
+                            handleLlmResponse(data.payload);
+                            break;
+                        case 'source-code-request':
+                            console.log(`Peer ${peerId.slice(-6)} is requesting our source code.`);
+                            // We should only respond if we are not busy, to avoid overwhelming the network
+                            if (!state.isBusy) {
+                                handleShareCode(peerId); // Send our code directly back to the requester
+                            } else {
+                                console.log(`Ignoring source-code-request from ${peerId.slice(-6)} because I am busy.`);
+                            }
+                            break;
+                        case 'source-code-offer':
+                            handleCodeOffer(peerId, data.payload);
+                            break;
+                        case 'improvement-proposal':
+                             handleImprovementProposal(peerId, data.payload);
+                            break;
+                        default:
+                            console.warn(`Unknown data type received: ${data.type}`);
                     }
                 }
             });
@@ -378,6 +413,8 @@
             dom.reviewCodeBtn.addEventListener('click', handleReviewCode);
             dom.applyCodeBtn.addEventListener('click', handleApplyCode);
             dom.autopilotBtn.addEventListener('click', handleAutopilot);
+            dom.p2p.requestCodeBtn.addEventListener('click', handleRequestCode);
+            dom.p2p.shareCodeBtn.addEventListener('click', handleShareCode);
 
             if (sessionStorage.getItem('autopilotEnabled') === 'true') {
                 dom.autopilotBtn.disabled = true;
@@ -562,6 +599,171 @@
             });
         }
 
+        // --- P2P Code Sharing ---
+        function handleRequestCode() {
+            console.log('Requesting source code from peers...');
+            MPLib.broadcastToRoom({ type: 'source-code-request' });
+            dom.p2p.requestCodeBtn.disabled = true;
+            setTimeout(() => { dom.p2p.requestCodeBtn.disabled = false; }, 10000); // Prevent spamming
+        }
+
+        function handleShareCode(requesterId) {
+            console.log(`Sharing source code with peers (requester: ${requesterId ? requesterId.slice(-6) : 'N/A'})...`);
+            const payload = {
+                type: 'source-code-offer',
+                payload: {
+                    sourceCode: state.currentCode,
+                    // Include metadata about the sender
+                    senderId: MPLib.getLocalRoomId(),
+                    senderMasterId: MPLib.getLocalMasterId()
+                }
+            };
+            if (requesterId) {
+                 MPLib.sendDirectToRoomPeer(requesterId, payload);
+            } else {
+                 // When sharing proactively, send to all ready peers
+                 MPLib.broadcastToRoom(payload, Array.from(state.readyPeers));
+            }
+        }
+
+        async function handleCodeOffer(peerId, payload) {
+            const { sourceCode: foreignCode, senderId } = payload;
+
+            if (state.isBusy) {
+                console.log(`Ignoring code offer from ${peerId.slice(-6)} because I am busy.`);
+                return;
+            }
+            if (foreignCode === state.currentCode) {
+                console.log(`Ignoring code offer from ${peerId.slice(-6)} because it's identical to my own.`);
+                return;
+            }
+
+            console.log(`Analyzing code offer from ${peerId.slice(-6)}...`);
+            state.isBusy = true;
+
+            try {
+                const analysisPrompt = `You are an expert software engineer tasked with merging two versions of a self-modifying HTML file.
+"My Code" is your current version. "Their Code" is a version from a peer.
+Your goal is to intelligently merge the best features from both.
+- If one version has a feature the other doesn't, include it.
+- If both have the same feature but different implementations, pick the better one.
+- If they are fundamentally different but both are good, try to combine them. For example, if they have different UI sections, include both.
+- Do not simply pick one over the other. Create a new, superior version.
+- Ensure the final output is a single, complete, and valid HTML file. Only output the raw code.
+
+My Code:
+\`\`\`html
+${state.currentCode}
+\`\`\`
+
+Their Code:
+\`\`\`html
+${foreignCode}
+\`\`\`
+
+New Merged Code:`;
+
+                const mergedCode = await callGeminiWithFallback(analysisPrompt);
+
+                if (mergedCode && !mergedCode.error && mergedCode.trim() !== '' && mergedCode.trim() !== state.currentCode) {
+                    console.log(`Successfully generated a merged code proposal for ${senderId.slice(-6)}.`);
+                    const proposalPayload = {
+                        type: 'improvement-proposal',
+                        payload: {
+                            proposedCode: mergedCode,
+                            originalPeerId: peerId // Keep track of the connection ID
+                        }
+                    };
+                    MPLib.sendDirectToRoomPeer(senderId, proposalPayload);
+                } else {
+                    console.log(`Code analysis did not produce a valid improvement.`, mergedCode);
+                }
+
+            } catch (error) {
+                console.error(`Error during code offer analysis for ${peerId.slice(-6)}:`, error);
+            } finally {
+                state.isBusy = false;
+            }
+        }
+
+        async function handleImprovementProposal(peerId, payload) {
+            const { proposedCode } = payload;
+
+            // Check if autopilot is running
+            const isAutopilot = sessionStorage.getItem('autopilotEnabled') === 'true';
+
+            if (isAutopilot) {
+                console.log(`[Autopilot] Received improvement proposal from ${peerId.slice(-6)}. Starting automatic review.`);
+
+                // Set the state for the review process
+                state.newCode = proposedCode;
+                dom.newCode.value = proposedCode; // Also update UI for visibility
+                dom.reviewCodeBtn.disabled = false;
+
+                const reviewOk = await handleReviewCode();
+
+                if (reviewOk) {
+                    console.log(`[Autopilot] Proposal from ${peerId.slice(-6)} passed review. Applying code.`);
+                    await handleApplyCode();
+                } else {
+                    console.log(`[Autopilot] Proposal from ${peerId.slice(-6)} failed review. Discarding.`);
+                    // Reset state if the code is not applied
+                    state.newCode = '';
+                    dom.newCode.value = '';
+                    dom.reviewCodeBtn.disabled = true;
+                }
+
+            } else {
+                // Manual mode: Display the proposal to the user
+                const proposalId = `proposal-${Date.now()}`;
+                console.log(`Displaying improvement proposal from ${peerId.slice(-6)}.`);
+
+                const proposalDiv = document.createElement('div');
+                proposalDiv.id = proposalId;
+                proposalDiv.style.border = "1px solid #add8e6";
+                proposalDiv.style.padding = "10px";
+                proposalDiv.style.marginTop = "10px";
+                proposalDiv.style.borderRadius = "5px";
+
+                const title = document.createElement('p');
+                title.innerHTML = `<strong>Proposal from Peer ${peerId.slice(-6)}:</strong>`;
+                proposalDiv.appendChild(title);
+
+                const codeTextarea = document.createElement('textarea');
+                codeTextarea.value = proposedCode;
+                codeTextarea.readOnly = true;
+                codeTextarea.style.height = '150px';
+                proposalDiv.appendChild(codeTextarea);
+
+                const acceptBtn = document.createElement('button');
+                acceptBtn.textContent = 'Accept & Evolve';
+                acceptBtn.onclick = async () => {
+                    console.log(`Accepting proposal ${proposalId} from peer ${peerId.slice(-6)}.`);
+                    state.newCode = proposedCode;
+                    dom.newCode.value = proposedCode;
+                    dom.reviewCodeBtn.disabled = false;
+
+                    console.log("Starting review of accepted proposal...");
+                    const reviewOk = await handleReviewCode();
+                    if (reviewOk) {
+                        console.log("Proposal review passed. Applying code.");
+                        await handleApplyCode();
+                    } else {
+                        console.warn("Accepted proposal failed code review. Manual intervention may be needed.");
+                    }
+                    proposalDiv.remove();
+                };
+                proposalDiv.appendChild(acceptBtn);
+
+                const proposalsContainer = dom.p2p.proposalsContainer;
+                if (proposalsContainer.querySelector('p')?.textContent === 'No proposals yet.') {
+                    proposalsContainer.innerHTML = '';
+                }
+                proposalsContainer.appendChild(proposalDiv);
+            }
+        }
+
+
         // --- Workflow Handlers ---
         // The verifyOnGatewayAndEvolve function has been removed to allow for immediate evolution.
         // The new page is now responsible for its own verification.
@@ -744,6 +946,14 @@ Review:`;
 
         async function runDrGeminiCycle() {
             console.log("--- Starting Dr. Gemini Cycle ---");
+
+            // As part of its cycle, the autopilot will request code from peers
+            // to see if it can get new ideas for evolution.
+            if (MPLib.getRoomConnections && MPLib.getRoomConnections().size > 0) {
+                console.log("Autopilot is requesting code from peers...");
+                handleRequestCode();
+            }
+
             try {
                 saveDrGeminiGuidance(); // Save guidance before starting
                 dom.prompt.placeholder = "Dr. Gemini is thinking of the next goal...";
