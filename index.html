@@ -101,6 +101,12 @@
             font-family: "Courier New", Courier, monospace;
             min-height: 50px;
         }
+        #console-output {
+            height: 200px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column-reverse;
+        }
         .hidden {
             display: none;
         }
@@ -203,6 +209,8 @@
         <h2>Current Source Code</h2>
         <textarea id="currentCode" readonly></textarea>
 
+        <h2>Console Output</h2>
+        <div id="console-output" class="output-area"></div>
     </div>
 
     <script type="module">
@@ -260,6 +268,7 @@
             newCode: document.getElementById('newCode'),
             reviewOutput: document.getElementById('review-output'),
             currentCode: document.getElementById('currentCode'),
+            consoleOutput: document.getElementById('console-output'),
             apiKeyModal: document.getElementById('apiKeyModal'),
             apiKeyInput: document.getElementById('apiKeyInput'),
             saveApiKeyBtn: document.getElementById('saveApiKeyBtn'),
@@ -274,6 +283,48 @@
                 proposalsContainer: document.getElementById('proposals-container'),
             },
         };
+
+        // --- Console Mirroring ---
+        function mirrorConsole() {
+            const consoleOutput = dom.consoleOutput;
+            if (!consoleOutput) return;
+
+            const original = {
+                log: console.log.bind(console),
+                error: console.error.bind(console),
+                warn: console.warn.bind(console),
+            };
+
+            function addToPanel(message, type) {
+                const entry = document.createElement('div');
+                entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+                if (type === 'error') {
+                    entry.style.color = 'red';
+                } else if (type === 'warn') {
+                    entry.style.color = 'orange';
+                }
+                // Since the flex-direction is column-reverse, we use prepend to add to the "bottom"
+                consoleOutput.prepend(entry);
+            }
+
+            console.log = function(...args) {
+                const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
+                addToPanel(message, 'log');
+                original.log.apply(console, args);
+            };
+
+            console.error = function(...args) {
+                const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
+                addToPanel(message, 'error');
+                original.error.apply(console, args);
+            };
+
+            console.warn = function(...args) {
+                const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
+                addToPanel(message, 'warn');
+                original.warn.apply(console, args);
+            };
+        }
 
         // --- Initialization ---
         window.onload = () => {
@@ -326,6 +377,7 @@
         import MPLib from './mplib.js';
 
         function initializeApp() {
+            mirrorConsole(); // Start mirroring the console to the UI
             // This function contains the original logic from window.onload after the key check
             console.log('Initializing application...');
 
