@@ -290,15 +290,6 @@
 
             <div class="panel panel-full-width collapsed">
                 <div class="panel-header">
-                    <h2>Linux Terminal (WebVM)</h2>
-                </div>
-                <div class="panel-content">
-                    <iframe id="webvm-iframe" src="data:text/html,%3C!DOCTYPE%20html%3E%0A%3Chtml%3E%0A%3Chead%3E%0A%20%20%3Cmeta%20charset%3D%22utf-8%22%3E%0A%20%20%3Cscript%20src%3D%22https%3A//cjrtnc.leaningtech.com/2.2/cheerpx.js%22%3E%3C/script%3E%0A%20%20%3Cscript%20src%3D%22https%3A//cjrtnc.leaningtech.com/2.2/xterm.js%22%3E%3C/script%3E%0A%20%20%3Clink%20rel%3D%22stylesheet%22%20href%3D%22https%3A//cjrtnc.leaningtech.com/2.2/xterm.css%22%20/%3E%0A%3C/head%3E%0A%3Cbody%20style%3D%22margin%3A0%3B%20background-color%3Ablack%3B%22%3E%0A%20%20%3Cdiv%20id%3D%22terminal%22%20style%3D%22width%3A100%25%3B%20height%3A100vh%3B%22%3E%3C/div%3E%0A%20%20%3Cscript%3E%0A%20%20%20%20(async%20()%20%3D%3E%20%7B%0A%20%20%20%20%20%20await%20cheerpx.init()%3B%0A%20%20%20%20%20%20const%20term%20%3D%20new%20Terminal()%3B%0A%20%20%20%20%20%20term.open(document.getElementById('terminal'))%3B%0A%0A%20%20%20%20%20%20let%20tty%3B%0A%20%20%20%20%20%20const%20cp%20%3D%20await%20cheerpx.run(%7B%0A%20%20%20%20%20%20%20%20terminal%3A%20term%2C%0A%20%20%20%20%20%20%20%20binary%3A%20'/bin/bash'%2C%0A%20%20%20%20%20%20%20%20onTTY%3A%20(d)%20%3D%3E%20%7B%20tty%20%3D%20d%3B%20%7D%2C%0A%20%20%20%20%20%20%7D)%3B%0A%0A%20%20%20%20%20%20window.addEventListener('message'%2C%20(event)%20%3D%3E%20%7B%0A%20%20%20%20%20%20%20%20if%20(event.data%20%26%26%20event.data.type%20%3D%3D%3D%20'execute')%20%7B%0A%20%20%20%20%20%20%20%20%20%20const%20command%20%3D%20event.data.command%3B%0A%20%20%20%20%20%20%20%20%20%20if%20(tty%20%26%26%20typeof%20command%20%3D%3D%3D%20'string')%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20tty.write(command%20%2B%20'\\r')%3B%0A%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%7D)%3B%0A%20%20%20%20%7D)()%3B%0A%20%20%3C/script%3E%0A%3C/body%3E%0A%3C/html%3E" style="width: 100%; height: 600px; border: none;"></iframe>
-                </div>
-            </div>
-
-            <div class="panel panel-full-width collapsed">
-                <div class="panel-header">
                     <h2>Java App Runner (CheerpJ)</h2>
                 </div>
                 <div class="panel-content">
@@ -1076,17 +1067,6 @@ What is the next goal?`;
 
         // --- Programmatic Hooks ---
         const jules = {
-            webvm: {
-                runCommand: (command) => {
-                    const webvmIframe = document.getElementById('webvm-iframe');
-                    if (webvmIframe && webvmIframe.contentWindow) {
-                        console.log(`Sending command to WebVM: ${command}`);
-                        webvmIframe.contentWindow.postMessage({ type: 'execute', command: command }, '*');
-                    } else {
-                        console.error('WebVM iframe not found or not accessible.');
-                    }
-                }
-            },
             jar: {
                 run: async (url) => {
                     if (!url) {
