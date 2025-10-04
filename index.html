@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jules - Self-Modifying Web App</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+    <script src="https://cjrtnc.leaningtech.com/4.2/loader.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -214,6 +215,19 @@
             <button id="shareCodeBtn" style="margin-top: 10px;">Share & Merge Code with Peers</button>
         </div>
 
+        <h2>Linux Environment (WebVM)</h2>
+        <div id="webvm-container" style="width: 100%; height: 600px; border: 1px solid #ccc; margin-bottom: 20px;">
+            <iframe src="https://webvm.io/" style="width: 100%; height: 100%; border: none;"></iframe>
+        </div>
+
+        <div id="cheerpj-container" style="border: 1px solid #ccc; padding: 10px; margin-bottom: 20px; border-radius: 5px;">
+            <h2>CheerpJ JAR Runner</h2>
+            <p>Enter the URL of a JAR file to run a Java application.</p>
+            <input type="text" id="jarUrlInput" placeholder="https://example.com/app.jar" style="width: calc(100% - 22px);">
+            <button id="loadJarBtn">Load and Run JAR</button>
+            <div id="cheerpj-display" style="width: 800px; height: 600px; margin-top: 10px; border: 1px solid #999; position: relative;"></div>
+        </div>
+
         <h2>Plan</h2>
         <div id="plan-output" class="output-area">No plan generated yet.</div>
 
@@ -303,6 +317,11 @@
                 peerId: document.getElementById('peer-id'),
                 connectionsCount: document.getElementById('connections-count'),
                 shareCodeBtn: document.getElementById('shareCodeBtn'),
+            },
+            cheerpj: {
+                jarUrlInput: document.getElementById('jarUrlInput'),
+                loadJarBtn: document.getElementById('loadJarBtn'),
+                display: document.getElementById('cheerpj-display'),
             },
         };
 
@@ -507,11 +526,64 @@
                 MPLib.broadcastToRoom({ type: 'source-code-request' });
             });
 
+            dom.cheerpj.loadJarBtn.addEventListener('click', handleLoadJar);
+
             if (sessionStorage.getItem('autopilotEnabled') === 'true') {
                 dom.autopilotBtn.disabled = true;
                 dom.autopilotBtn.textContent = 'Autopilot is ON';
                 // No delay needed, start the cycle.
                 runDrGeminiCycle();
+            }
+        }
+
+        async function handleLoadJar() {
+            const jarUrl = dom.cheerpj.jarUrlInput.value.trim();
+            if (!jarUrl) {
+                alert('Please enter a JAR file URL.');
+                return;
+            }
+
+            dom.cheerpj.loadJarBtn.disabled = true;
+            dom.cheerpj.loadJarBtn.textContent = 'Loading...';
+            console.log(`Loading JAR from: ${jarUrl}`);
+            dom.cheerpj.display.innerHTML = '<p>Loading CheerpJ environment...</p>';
+
+            try {
+                // Initialize CheerpJ
+                await cheerpjInit();
+
+                // Create the display area and mount it
+                dom.cheerpj.display.innerHTML = ''; // Clear loading message
+                cheerpjCreateDisplay(800, 600, dom.cheerpj.display);
+
+                // Fetch the JAR file
+                console.log('Fetching JAR file...');
+                const response = await fetch(jarUrl);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch JAR file (${response.status}): ${response.statusText}`);
+                }
+                const jarBlob = await response.blob();
+                console.log('JAR file fetched successfully.');
+
+                // Add the JAR to the virtual filesystem
+                const jarName = 'app.jar';
+                const jarPath = `/app/${jarName}`;
+                console.log(`Adding JAR to virtual filesystem at ${jarPath}`);
+                await cjFileBlob(jarPath, jarBlob);
+                console.log('JAR file added to virtual filesystem.');
+
+                // Run the JAR
+                console.log(`Running JAR: cheerpjRunJar("${jarPath}")`);
+                await cheerpjRunJar(jarPath);
+                console.log('Java application started.');
+
+            } catch (error) {
+                console.error('Error loading or running JAR file:', error);
+                const errorMessage = error.message || 'An unknown error occurred.';
+                dom.cheerpj.display.innerHTML = `<p style="color: red; padding: 10px;"><b>Error:</b> ${errorMessage}</p>`;
+            } finally {
+                dom.cheerpj.loadJarBtn.disabled = false;
+                dom.cheerpj.loadJarBtn.textContent = 'Load and Run JAR';
             }
         }
 
