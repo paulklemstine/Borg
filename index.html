@@ -252,7 +252,8 @@
                         <button id="getPlan">1. Generate Plan</button>
                         <button id="getCode" disabled>2. Generate Code</button>
                         <button id="reviewCode" disabled>3. Review Code</button>
-                        <button id="applyCode" disabled>4. Apply & Evolve</button>
+                        <button id="createPullRequestBtn" disabled>4. Create Pull Request</button>
+                        <button id="applyCode" disabled>5. Apply & Evolve</button>
                     </div>
                      <div id="autopilot-controls">
                         <button id="autopilot">Start Autopilot</button>
@@ -279,6 +280,19 @@
                     <p><strong>My Peer ID:</strong> <span id="peer-id">N/A</span></p>
                     <p><strong>Connected Peers:</strong> <span id="connections-count">0</span></p>
                     <button id="shareCodeBtn" style="margin-top: 10px;">Share & Merge Code with Peers</button>
+                </div>
+            </div>
+
+            <div class="panel panel-full-width collapsed">
+                <div class="panel-header">
+                    <h2>GitHub Settings</h2>
+                </div>
+                <div class="panel-content">
+                    <p>Configure your GitHub repository to create pull requests with your mutations.</p>
+                    <input type="text" id="github-username" placeholder="GitHub Username">
+                    <input type="text" id="github-repo" placeholder="Repository Name">
+                    <input type="password" id="github-pat" placeholder="Personal Access Token">
+                    <button id="save-github-settings">Save Settings</button>
                 </div>
             </div>
 
@@ -371,6 +385,11 @@
             isBusy: false,
             readyPeers: new Set(),
             isMerging: false,
+            github: {
+                username: null,
+                repo: null,
+                pat: null,
+            },
         };
 
         // --- DOM Elements ---
@@ -379,6 +398,7 @@
             getPlanBtn: document.getElementById('getPlan'),
             getCodeBtn: document.getElementById('getCode'),
             reviewCodeBtn: document.getElementById('reviewCode'),
+            createPullRequestBtn: document.getElementById('createPullRequestBtn'),
             applyCodeBtn: document.getElementById('applyCode'),
             autopilotBtn: document.getElementById('autopilot'),
             planOutput: document.getElementById('plan-output'),
@@ -395,6 +415,12 @@
                 peerId: document.getElementById('peer-id'),
                 connectionsCount: document.getElementById('connections-count'),
                 shareCodeBtn: document.getElementById('shareCodeBtn'),
+            },
+            github: {
+                username: document.getElementById('github-username'),
+                repo: document.getElementById('github-repo'),
+                pat: document.getElementById('github-pat'),
+                saveBtn: document.getElementById('save-github-settings'),
             },
         };
 
@@ -517,6 +543,39 @@
 
         import MPLib from './mplib.js';
 
+        function loadGitHubSettings() {
+            const username = localStorage.getItem('github_username');
+            const repo = localStorage.getItem('github_repo');
+            if (username && repo) {
+                state.github.username = username;
+                state.github.repo = repo;
+                dom.github.username.value = username;
+                dom.github.repo.value = repo;
+                console.log('Loaded GitHub settings from localStorage.');
+            }
+        }
+
+        function handleSaveGitHubSettings() {
+            const username = dom.github.username.value.trim();
+            const repo = dom.github.repo.value.trim();
+            const pat = dom.github.pat.value.trim();
+
+            if (username && repo) {
+                localStorage.setItem('github_username', username);
+                localStorage.setItem('github_repo', repo);
+                state.github.username = username;
+                state.github.repo = repo;
+                console.log('GitHub username and repo saved to localStorage.');
+            } else {
+                console.warn('Username or repo is empty. Not saving to localStorage.');
+            }
+
+            if (pat) {
+                state.github.pat = pat;
+                console.log('GitHub PAT stored in session state.');
+            }
+        }
+
         function initializeApp() {
             initializeDebugPanel();
             initializeCollapsiblePanels();
@@ -536,6 +595,7 @@
             dom.currentCode.value = state.currentCode;
 
             loadDrGeminiGuidance();
+            loadGitHubSettings();
 
             // --- P2P Initialization ---
             function updateConnectionsCount() {
@@ -595,8 +655,10 @@
             dom.getPlanBtn.addEventListener('click', handleGetPlan);
             dom.getCodeBtn.addEventListener('click', handleGetCode);
             dom.reviewCodeBtn.addEventListener('click', handleReviewCode);
+            dom.createPullRequestBtn.addEventListener('click', handleCreatePullRequest);
             dom.applyCodeBtn.addEventListener('click', handleApplyCode);
             dom.autopilotBtn.addEventListener('click', handleAutopilot);
+            dom.github.saveBtn.addEventListener('click', handleSaveGitHubSettings);
             dom.p2p.shareCodeBtn.addEventListener('click', () => {
                 if (state.isMerging) {
                     console.warn('A merge is already in progress. Please wait.');
@@ -899,6 +961,7 @@ Review:`;
                     dom.reviewOutput.textContent = state.review;
                     // A simple check to see if the review is positive
                     if (state.review.toLowerCase().includes('lgtm')) {
+                        dom.createPullRequestBtn.disabled = false;
                         dom.applyCodeBtn.disabled = false;
                         isLgtm = true;
                     }
@@ -911,6 +974,42 @@ Review:`;
                 dom.reviewCodeBtn.textContent = '3. Review Code';
             }
             return isLgtm;
+        }
+
+        async function handleCreatePullRequest() {
+            if (!state.newCode) {
+                alert('No new code to apply. Please generate code first.');
+                return;
+            }
+            if (!state.github.username || !state.github.repo || !state.github.pat) {
+                alert('Please configure and save your GitHub settings first.');
+                return;
+            }
+
+            dom.createPullRequestBtn.disabled = true;
+            dom.createPullRequestBtn.textContent = 'Creating PR...';
+
+            try {
+                const prUrl = await createPullRequest();
+
+                const planOutput = dom.planOutput;
+                planOutput.innerHTML = `Successfully created Pull Request: <a href="${prUrl}" target="_blank">${prUrl}</a>`;
+                console.log(`Pull Request created: ${prUrl}`);
+
+                // Reset buttons
+                dom.getCodeBtn.disabled = true;
+                dom.reviewCodeBtn.disabled = true;
+                dom.createPullRequestBtn.disabled = true;
+                dom.applyCodeBtn.disabled = true;
+
+
+            } catch (error) {
+                console.error('Failed to create Pull Request:', error);
+                dom.planOutput.textContent = `Error creating PR: ${error.message}`;
+            } finally {
+                dom.createPullRequestBtn.disabled = false;
+                dom.createPullRequestBtn.textContent = '4. Create Pull Request';
+            }
         }
 
         async function handleApplyCode() {
@@ -937,6 +1036,96 @@ Review:`;
             document.open();
             document.write(state.newCode);
             document.close();
+        }
+
+        // --- GitHub API Functions ---
+        async function githubApiRequest(endpoint, method = 'GET', body = null) {
+            const { username, repo, pat } = state.github;
+            const url = `https://api.github.com/repos/${username}/${repo}${endpoint}`;
+
+            const headers = {
+                'Authorization': `token ${pat}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'X-GitHub-Api-Version': '2022-11-28'
+            };
+
+            const options = {
+                method: method,
+                headers: headers,
+            };
+
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(`GitHub API Error on ${endpoint}: ${errorData.message}`);
+            }
+            return response.status === 204 ? null : response.json();
+        }
+
+        async function createPullRequest() {
+            const { username, repo } = state.github;
+
+            // 1. Get default branch and its latest commit SHA
+            console.log('Fetching repo details...');
+            const repoData = await githubApiRequest('');
+            const defaultBranch = repoData.default_branch;
+            console.log(`Default branch is: ${defaultBranch}`);
+
+            console.log(`Fetching latest commit on ${defaultBranch}...`);
+            const refData = await githubApiRequest(`/git/ref/heads/${defaultBranch}`);
+            const latestCommitSha = refData.object.sha;
+            console.log(`Latest commit SHA: ${latestCommitSha}`);
+
+            // 2. Create a new branch
+            const newBranchName = `mutation-${new Date().getTime()}`;
+            console.log(`Creating new branch: ${newBranchName}`);
+            await githubApiRequest('/git/refs', 'POST', {
+                ref: `refs/heads/${newBranchName}`,
+                sha: latestCommitSha
+            });
+
+            // 3. Create a new commit with the file change
+            console.log('Creating commit...');
+            const commitMessage = `Automated commit: ${dom.prompt.value.substring(0, 50)}...`;
+            const newTreeSha = await githubApiRequest('/git/trees', 'POST', {
+                base_tree: latestCommitSha,
+                tree: [{
+                    path: 'index.html',
+                    mode: '100644', // file (blob)
+                    type: 'blob',
+                    content: state.newCode
+                }]
+            }).then(data => data.sha);
+
+            const newCommitSha = await githubApiRequest('/git/commits', 'POST', {
+                message: commitMessage,
+                tree: newTreeSha,
+                parents: [latestCommitSha]
+            }).then(data => data.sha);
+
+            // 4. Update the new branch to point to the new commit
+            console.log('Updating branch reference...');
+            await githubApiRequest(`/git/refs/heads/${newBranchName}`, 'PATCH', {
+                sha: newCommitSha
+            });
+
+            // 5. Create the pull request
+            console.log('Creating pull request...');
+            const prTitle = `Mutation: ${dom.prompt.value.substring(0, 70)}`;
+            const prBody = `This pull request was automatically generated by Jules based on the following goal:\n\n> ${dom.prompt.value}\n\n**Plan:**\n${state.plan}`;
+            const prData = await githubApiRequest('/pulls', 'POST', {
+                title: prTitle,
+                head: newBranchName,
+                base: defaultBranch,
+                body: prBody
+            });
+
+            console.log('Pull request created successfully!');
+            return prData.html_url;
         }
 
         async function executeWorkflow() {
