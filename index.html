@@ -668,48 +668,74 @@
         async function callGemini(prompt, model) {
             if (!state.apiKey) {
                 console.error('Gemini API Key not provided.');
-                return { error: 'API Key not provided', status: 'NO_API_KEY' };
+                return { error: 'API Key not provided' };
             }
 
             const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+            const MAX_RETRIES = 5;
+            const INITIAL_DELAY_MS = 1000;
 
-            try {
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-goog-api-key': state.apiKey,
-                    },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: prompt }] }],
-                        safetySettings: [
-                            { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
-                            { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
-                            { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
-                            { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
-                        ]
-                    }),
-                });
+            let lastError = null;
 
-                if (response.ok) {
-                    const data = await response.json();
-                    if (!data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].text) {
-                        return { error: 'Unexpected API response structure.', status: 'UNEXPECTED_RESPONSE' };
-                    }
-                    const rawText = data.candidates[0].content.parts[0].text;
-                    return extractFromMarkdown(rawText);
-                }
-
-                const errorBody = await response.text();
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                 try {
-                    const errorJson = JSON.parse(errorBody);
-                    return { error: `API request failed with status ${response.status}`, status: response.status, details: errorJson.error.details };
-                } catch (e) {
-                    return { error: `API request failed with status ${response.status}`, status: response.status, body: errorBody };
+                    const response = await fetch(API_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-goog-api-key': state.apiKey,
+                        },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            safetySettings: [
+                                { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
+                                { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
+                                { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
+                                { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
+                            ]
+                        }),
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (!data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].text) {
+                            lastError = { error: 'Unexpected API response structure.' };
+                            console.error(lastError.error, data);
+                            return lastError; // Don't retry on this, it's a content error
+                        }
+                        const rawText = data.candidates[0].content.parts[0].text;
+                        return extractFromMarkdown(rawText);
+                    }
+
+                    const errorBody = await response.text();
+                    console.error(`API Error for model ${model} (attempt ${attempt + 1}):`, errorBody);
+                     try {
+                        const errorJson = JSON.parse(errorBody);
+                        lastError = { error: `API request failed with status ${response.status}`, status: response.status, details: errorJson.error.details };
+                    } catch (e) {
+                        lastError = { error: `API request failed with status ${response.status}`, status: response.status };
+                    }
+
+                    // Decide whether to retry
+                    if (response.status === 429 || response.status === 500 || response.status === 503) {
+                        const delay = INITIAL_DELAY_MS * (2 ** attempt);
+                        console.warn(`Retriable error ${response.status}. Retrying in ${delay}ms...`);
+                        await sleep(delay);
+                    } else {
+                        return lastError; // Non-retriable error
+                    }
+
+                } catch (error) {
+                    console.error(`Network error for model ${model} (attempt ${attempt + 1}):`, error);
+                    lastError = { error: error.message, status: 'NETWORK_ERROR' };
+                    const delay = INITIAL_DELAY_MS * (2 ** attempt);
+                    console.warn(`Network error. Retrying in ${delay}ms...`);
+                    await sleep(delay);
                 }
-            } catch (error) {
-                return { error: `Network error: ${error.message}`, status: 'NETWORK_ERROR' };
             }
+
+            console.error(`API call failed for model ${model} after ${MAX_RETRIES} attempts.`);
+            return lastError;
         }
 
         async function handleLlmRequest(requesterId, payload) {
@@ -768,62 +794,34 @@
                     return;
                 }
                 const { resolve, reject } = state.pendingLlmRequests.get(requestId);
+
                 console.log(`[Local Fallback] No peer responded for request ${requestId.slice(-6)}. Starting local execution.`);
 
-                const MAX_RETRIES = 4; // 1 initial cycle + 3 retry cycles
-                const INITIAL_DELAY_MS = 2000;
-                let lastError = null;
+                // First, try the primary model. callGemini now handles retries internally.
+                let result = await callGemini(prompt, 'gemini-2.5-pro');
 
-                const isRetriable = (error) => {
-                    if (!error) return false;
-                    const retriableStatuses = [429, 500, 503, 'NETWORK_ERROR'];
-                    return retriableStatuses.includes(error.status);
-                };
-
-                for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-                    // Cycle 1: Try Pro model
-                    let result = await callGemini(prompt, 'gemini-2.5-pro');
-                    if (typeof result === 'string') {
-                        resolve(result);
-                        state.pendingLlmRequests.delete(requestId);
-                        return;
-                    }
-                    lastError = result;
-                    console.warn(`Primary model (pro) failed on attempt ${attempt + 1}:`, lastError);
-
-                    // Cycle 2: If Pro failed for a retriable reason, immediately try Flash model
-                    if (isRetriable(lastError)) {
-                        console.log('Immediately trying fallback model (flash)...');
-                        result = await callGemini(prompt, 'gemini-2.5-flash');
-                        if (typeof result === 'string') {
-                            resolve(result);
-                            state.pendingLlmRequests.delete(requestId);
-                            return;
-                        }
-                        lastError = result;
-                        console.warn(`Fallback model (flash) also failed on attempt ${attempt + 1}:`, lastError);
-                    }
-
-                    // If we are here, both models failed (or the first failure was non-retriable).
-                    if (!isRetriable(lastError) || attempt === MAX_RETRIES - 1) {
-                        break; // Break the loop if error is not retriable or if it's the last attempt.
-                    }
-
-                    // Wait before the next full retry cycle
-                    const delay = INITIAL_DELAY_MS * (2 ** attempt);
-                    console.log(`Both models failed. Retrying cycle in ${delay}ms...`);
-                    await sleep(delay);
+                // If the primary model fails, try the fallback model.
+                if (typeof result !== 'string') {
+                    console.warn('Primary model failed. Trying fallback model...');
+                    result = await callGemini(prompt, 'gemini-2.5-flash');
                 }
 
-                // If the loop finished without success
-                console.error(`All models and retries failed for request ${requestId.slice(-6)}.`);
-                reject(lastError || { error: 'All local Gemini models failed.' });
+                if (typeof result === 'string') {
+                    console.log(`[Local Fallback] Succeeded for request ${requestId.slice(-6)}.`);
+                    resolve(result);
+                } else {
+                    console.error(`[Local Fallback] All models failed for request ${requestId.slice(-6)}.`);
+                    reject(result || { error: 'All local Gemini models failed.' });
+                }
+
                 state.pendingLlmRequests.delete(requestId);
             };
 
             return new Promise((resolve, reject) => {
-                const fallbackTimeout = setTimeout(executeLocalLlmCall, 5000);
+                const fallbackTimeout = setTimeout(executeLocalLlmCall, 5000); // 5-second timeout
+
                 state.pendingLlmRequests.set(requestId, { resolve, reject, fallbackTimeout });
+
                 console.log(`Broadcasting LLM request ${requestId.slice(-6)} to ${state.readyPeers.size} ready peers.`);
                 MPLib.broadcastToRoom({
                     type: 'llm-request',
