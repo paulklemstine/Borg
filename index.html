@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jules - Self-Modifying Web App</title>
+    <title>Jules: A Self Modifying Organism</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
     <style>
         body {
@@ -231,10 +231,10 @@
         </div>
     </div>
     <div id="container">
-        <h1>Jules - An Economic Evolution Engine</h1>
+        <h1>Jules: A Self Modifying Organism</h1>
 
         <div id="dashboard">
-            <div class="panel">
+            <div class="panel" style="display:none;">
                 <div class="panel-header">
                     <h2>1. Goal</h2>
                 </div>
@@ -243,22 +243,6 @@
                 </div>
             </div>
 
-            <div class="panel">
-                <div class="panel-header">
-                    <h2>2. Controls</h2>
-                </div>
-                <div class="panel-content">
-                    <div id="controls">
-                        <button id="getPlan">1. Generate Plan</button>
-                        <button id="getCode" disabled>2. Generate Code</button>
-                        <button id="reviewCode" disabled>3. Review Code</button>
-                        <button id="applyCode" disabled>4. Apply & Evolve</button>
-                    </div>
-                     <div id="autopilot-controls">
-                        <button id="autopilot">Start Autopilot</button>
-                    </div>
-                </div>
-            </div>
 
             <div class="panel">
                 <div class="panel-header">
@@ -278,7 +262,15 @@
                     <p><strong>Status:</strong> <span id="p2p-status-text">Disconnected</span></p>
                     <p><strong>My Peer ID:</strong> <span id="peer-id">N/A</span></p>
                     <p><strong>Connected Peers:</strong> <span id="connections-count">0</span></p>
-                    <button id="shareCodeBtn" style="margin-top: 10px;">Share & Merge Code with Peers</button>
+                </div>
+            </div>
+
+            <div class="panel panel-full-width">
+                <div class="panel-header">
+                    <h2>Autopilot Status</h2>
+                </div>
+                <div class="panel-content">
+                    <div id="autopilot-status" class="output-area">Idle</div>
                 </div>
             </div>
 
@@ -347,20 +339,13 @@
 
         // --- Page Load State Handling ---
         function processPageLoadState() {
-            // After a page evolution (via document.write), the API key and autopilot state
-            // are stored in sessionStorage. We retrieve them here.
+            // After a page evolution (via document.write), the API key is
+            // stored in sessionStorage. We retrieve it here.
             const apiKey = sessionStorage.getItem('apiKeyForNextLoad');
             if (apiKey) {
                 console.log('API Key found in sessionStorage. Storing in localStorage.');
                 localStorage.setItem('apiKey', apiKey);
                 sessionStorage.removeItem('apiKeyForNextLoad'); // Clean up
-            }
-
-            const autopilot = sessionStorage.getItem('autopilotForNextLoad');
-            if (autopilot === 'true') {
-                console.log('Autopilot flag found in sessionStorage. Re-enabling.');
-                sessionStorage.setItem('autopilotEnabled', 'true');
-                sessionStorage.removeItem('autopilotForNextLoad'); // Clean up
             }
         }
 
@@ -390,11 +375,6 @@
         // --- DOM Elements ---
         const dom = {
             prompt: document.getElementById('prompt'),
-            getPlanBtn: document.getElementById('getPlan'),
-            getCodeBtn: document.getElementById('getCode'),
-            reviewCodeBtn: document.getElementById('reviewCode'),
-            applyCodeBtn: document.getElementById('applyCode'),
-            autopilotBtn: document.getElementById('autopilot'),
             planOutput: document.getElementById('plan-output'),
             newCode: document.getElementById('newCode'),
             reviewOutput: document.getElementById('review-output'),
@@ -404,11 +384,11 @@
             saveApiKeyBtn: document.getElementById('saveApiKeyBtn'),
             container: document.getElementById('container'),
             drGeminiGuidance: document.getElementById('dr-gemini-guidance'),
+            autopilotStatus: document.getElementById('autopilot-status'),
             p2p: {
                 statusText: document.getElementById('p2p-status-text'),
                 peerId: document.getElementById('peer-id'),
                 connectionsCount: document.getElementById('connections-count'),
-                shareCodeBtn: document.getElementById('shareCodeBtn'),
             },
             savedPagesList: document.getElementById('saved-pages-list'),
         };
@@ -535,24 +515,19 @@
         function initializeApp() {
             initializeDebugPanel();
             initializeCollapsiblePanels();
-            // This function contains the original logic from window.onload after the key check
             console.log('Initializing application...');
 
-            // Load rate-limited models from sessionStorage
             const storedRateLimits = sessionStorage.getItem('rateLimitedModels');
             if (storedRateLimits) {
                 state.rateLimitedModels = JSON.parse(storedRateLimits);
                 console.log('Loaded rate-limited models from sessionStorage:', state.rateLimitedModels);
             }
 
-
-            // Capture the entire HTML source of the current page
             state.currentCode = document.documentElement.outerHTML;
             dom.currentCode.value = state.currentCode;
 
             loadDrGeminiGuidance();
 
-            // --- P2P Initialization ---
             function updateConnectionsCount() {
                 const connections = MPLib.getRoomConnections();
                 dom.p2p.connectionsCount.textContent = connections.size;
@@ -574,9 +549,7 @@
                     MPLib.joinRoom('borg-lobby');
                     MPLib.sendToMaster({ type: 'update_status', payload: { newRoom: 'borg-lobby', isPublic: true } });
                 },
-                onRoomPeerJoined: (peerId, conn) => {
-                    updateConnectionsCount();
-                },
+                onRoomPeerJoined: (peerId, conn) => { updateConnectionsCount(); },
                 onRoomPeerLeft: (peerId) => {
                     updateConnectionsCount();
                     state.readyPeers.delete(peerId);
@@ -594,9 +567,7 @@
                         console.log(`Received source code request from ${peerId.slice(-6)}. Responding.`);
                         MPLib.sendDirectToRoomPeer(peerId, {
                             type: 'source-code-response',
-                            payload: {
-                                code: state.currentCode
-                            }
+                            payload: { code: state.currentCode }
                         });
                     } else if (data.type === 'source-code-response') {
                         console.log(`Received source code response from ${peerId.slice(-6)}.`);
@@ -609,33 +580,10 @@
                 }
             });
 
-
-            // Add event listeners
-            dom.getPlanBtn.addEventListener('click', handleGetPlan);
-            dom.getCodeBtn.addEventListener('click', handleGetCode);
-            dom.reviewCodeBtn.addEventListener('click', handleReviewCode);
-            dom.applyCodeBtn.addEventListener('click', handleApplyCode);
-            dom.autopilotBtn.addEventListener('click', handleAutopilot);
-            dom.p2p.shareCodeBtn.addEventListener('click', () => {
-                if (state.isMerging) {
-                    console.warn('A merge is already in progress. Please wait.');
-                    return;
-                }
-                state.isMerging = true;
-                console.log('Requesting source code from all peers...');
-                dom.planOutput.textContent = 'Requesting source code from peers...';
-                dom.p2p.shareCodeBtn.disabled = true;
-                MPLib.broadcastToRoom({ type: 'source-code-request' });
-            });
-
-            if (sessionStorage.getItem('autopilotEnabled') === 'true') {
-                dom.autopilotBtn.disabled = true;
-                dom.autopilotBtn.textContent = 'Autopilot is ON';
-                // No delay needed, start the cycle.
-                runDrGeminiCycle();
-            }
-
             renderSavedPagesList();
+
+            // Start the main autonomous loop
+            runDrGeminiCycle();
         }
 
         function loadPage(pageId) {
@@ -878,21 +826,14 @@
         }
 
         // --- Workflow Handlers ---
-        // The verifyOnGatewayAndEvolve function has been removed to allow for immediate evolution.
-        // The new page is now responsible for its own verification.
-
-        async function handleGetPlan() {
+        async function getPlan() {
             const userPrompt = dom.prompt.value;
             if (!userPrompt) {
-                console.error('Please enter a goal.');
-                return;
+                throw new Error("No goal provided in prompt textarea.");
             }
+            updateStatus("Generating plan...");
 
-            dom.getPlanBtn.disabled = true;
-            dom.getPlanBtn.textContent = 'Generating...';
-
-            try {
-                const planPrompt = `You are an expert software engineer. Your task is to create a step-by-step plan to modify the following HTML code based on the user's request. The entire application is in this single file.
+            const planPrompt = `You are an expert software engineer. Your task is to create a step-by-step plan to modify the following HTML code based on the user's request. The entire application is in this single file.
 
 User Request: "${userPrompt}"
 
@@ -903,32 +844,26 @@ ${state.currentCode}
 
 Provide a concise plan.`;
 
-                const result = await callGeminiWithFallback(planPrompt);
-                if (result && !result.error) {
-                    state.plan = result;
-                    dom.planOutput.textContent = state.plan;
-                    dom.getCodeBtn.disabled = false;
-                }
-            } catch (error) {
-                console.error('Error getting plan:', error);
-                dom.planOutput.textContent = `An error occurred: ${error.error || JSON.stringify(error)}`;
-            } finally {
-                dom.getPlanBtn.disabled = false;
-                dom.getPlanBtn.textContent = '1. Generate Plan';
+            const result = await callGeminiWithFallback(planPrompt);
+            if (result && !result.error) {
+                state.plan = result;
+                dom.planOutput.textContent = state.plan;
+                updateStatus("Plan generated successfully.");
+            } else {
+                 const errorMessage = `An error occurred while generating the plan: ${result.error || JSON.stringify(result)}`;
+                 updateStatus(errorMessage);
+                 throw new Error(errorMessage);
             }
         }
 
-        async function handleGetCode(feedback = '') { // Accept optional feedback
-            dom.getCodeBtn.disabled = true;
-            dom.getCodeBtn.textContent = 'Generating...';
+        async function getCode(feedback = '') {
+            updateStatus("Generating code...");
+            let feedbackPrompt = '';
+            if (feedback) {
+                feedbackPrompt = `A previous attempt was reviewed and had the following issues. You MUST address them:\n${feedback}`;
+            }
 
-            try {
-                let feedbackPrompt = '';
-                if (feedback) {
-                    feedbackPrompt = `A previous attempt was reviewed and had the following issues. You MUST address them:\n${feedback}`;
-                }
-
-                const codePrompt = `You are an expert software engineer. Based on the following plan and the current code, generate the complete, new HTML code for the file. Ensure you only output the raw code, with no explanations or markdown formatting.
+            const codePrompt = `You are an expert software engineer. Based on the following plan and the current code, generate the complete, new HTML code for the file. Ensure you only output the raw code, with no explanations or markdown formatting.
 ${feedbackPrompt}
 Plan:
 ${state.plan}
@@ -940,28 +875,22 @@ ${state.currentCode}
 
 New Code:`;
 
-                const result = await callGeminiWithFallback(codePrompt);
-                if (result && !result.error) {
-                    state.newCode = result; // No more cleaning needed here
-                    dom.newCode.value = state.newCode;
-                    dom.reviewCodeBtn.disabled = false;
-                }
-            } catch (error) {
-                console.error('Error getting code:', error);
-                dom.newCode.value = `An error occurred: ${error.error || JSON.stringify(error)}`;
-            } finally {
-                dom.getCodeBtn.disabled = false;
-                dom.getCodeBtn.textContent = '2. Generate Code';
+            const result = await callGeminiWithFallback(codePrompt);
+            if (result && !result.error) {
+                state.newCode = result;
+                dom.newCode.value = state.newCode;
+                updateStatus("Code generated successfully.");
+            } else {
+                const errorMessage = `An error occurred while generating code: ${result.error || JSON.stringify(result)}`;
+                updateStatus(errorMessage);
+                dom.newCode.value = errorMessage;
+                throw new Error(errorMessage);
             }
         }
 
-        async function handleReviewCode() {
-            dom.reviewCodeBtn.disabled = true;
-            dom.reviewCodeBtn.textContent = 'Reviewing...';
-            let isLgtm = false;
-
-            try {
-                const reviewPrompt = `You are a world-class code reviewer. Review the "New Code" and check if it correctly implements the "Plan" and doesn't introduce any obvious bugs. The "Original Code" is provided for context. Provide a short, concise review. If the code looks good, say "LGTM!" (Looks Good To Me!).
+        async function reviewCode() {
+            updateStatus("Reviewing code...");
+            const reviewPrompt = `You are a world-class code reviewer. Review the "New Code" and check if it correctly implements the "Plan" and doesn't introduce any obvious bugs. The "Original Code" is provided for context. Provide a short, concise review. If the code looks good, say "LGTM!" (Looks Good To Me!).
 
 Plan:
 ${state.plan}
@@ -978,45 +907,38 @@ ${state.newCode}
 
 Review:`;
 
-                const result = await callGeminiWithFallback(reviewPrompt);
-                if (result && !result.error) {
-                    state.review = result;
-                    dom.reviewOutput.textContent = state.review;
-                    // A simple check to see if the review is positive
-                    if (state.review.toLowerCase().includes('lgtm')) {
-                        dom.applyCodeBtn.disabled = false;
-                        isLgtm = true;
-                    }
+            const result = await callGeminiWithFallback(reviewPrompt);
+            if (result && !result.error) {
+                state.review = result;
+                dom.reviewOutput.textContent = state.review;
+                if (state.review.toLowerCase().includes('lgtm')) {
+                    updateStatus("Code review passed.");
+                    return true;
+                } else {
+                    updateStatus("Code review failed.");
+                    return false;
                 }
-            } catch (error) {
-                console.error('Error reviewing code:', error);
-                dom.reviewOutput.textContent = `An error occurred: ${error.error || JSON.stringify(error)}`;
-            } finally {
-                dom.reviewCodeBtn.disabled = false;
-                dom.reviewCodeBtn.textContent = '3. Review Code';
+            } else {
+                const errorMessage = `An error occurred while reviewing code: ${result.error || JSON.stringify(result)}`;
+                updateStatus(errorMessage);
+                dom.reviewOutput.textContent = errorMessage;
+                throw new Error(errorMessage);
             }
-            return isLgtm;
         }
 
-        async function handleApplyCode() {
+        async function applyCode() {
             if (!state.newCode) {
-                console.error('No new code has been generated to apply.');
-                alert('No new code to apply. Please generate code first.');
-                return;
+                const msg = 'No new code has been generated to apply.';
+                updateStatus(msg);
+                throw new Error(msg);
             }
 
-            dom.applyCodeBtn.disabled = true;
-            dom.applyCodeBtn.textContent = 'Evolving...';
-
+            updateStatus("Evolving...");
             console.log('Saving and applying new code...');
 
-            // 1. Generate a unique ID for the new page version.
             const newPageId = `jules-page-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-            // 2. Save the new page locally.
             savePage(newPageId, state.newCode);
 
-            // 3. Broadcast the new page to peers.
             console.log(`Broadcasting new page ${newPageId} to peers.`);
             MPLib.broadcastToRoom({
                 type: 'new-page-version',
@@ -1026,14 +948,8 @@ Review:`;
                 }
             });
 
-            // Persist critical state to sessionStorage for the next page load
             sessionStorage.setItem('apiKeyForNextLoad', state.apiKey);
-            if (sessionStorage.getItem('autopilotEnabled') === 'true') {
-                 sessionStorage.setItem('autopilotForNextLoad', 'true');
-            }
-            // Persist the rate limit state
             sessionStorage.setItem('rateLimitedModels', JSON.stringify(state.rateLimitedModels));
-
 
             document.open();
             document.write(state.newCode);
@@ -1043,33 +959,31 @@ Review:`;
         async function executeWorkflow() {
             try {
                 console.log(`Executing workflow for goal: "${dom.prompt.value}"`);
-                await handleGetPlan();
-                if (dom.getCodeBtn.disabled) throw new Error('Autopilot failed at planning stage.');
+                await getPlan();
 
                 let reviewFeedback = '';
-                const maxAttempts = 3; // Prevent infinite loops
+                const maxAttempts = 3;
                 for (let i = 0; i < maxAttempts; i++) {
-                    console.log(`Code generation attempt ${i + 1}/${maxAttempts}`);
-                    await handleGetCode(reviewFeedback); // Pass feedback to code generator
-                    if (dom.reviewCodeBtn.disabled) throw new Error('Autopilot failed at code generation stage.');
+                    updateStatus(`Code generation attempt ${i + 1}/${maxAttempts}...`);
+                    await getCode(reviewFeedback);
 
-                    const reviewOk = await handleReviewCode(); // Returns true if LGTM
+                    const reviewOk = await reviewCode();
                     if (reviewOk) {
-                        console.log("Code review passed. Applying code.");
-                        await handleApplyCode();
-                        return; // Success, exit workflow
+                        updateStatus("Code review passed. Applying code...");
+                        await applyCode();
+                        return; // Success, exit workflow. The page will reload.
                     } else {
-                        console.log("Code review failed. Retrying with feedback.");
-                        reviewFeedback = state.review; // state.review was set in handleReviewCode
+                        reviewFeedback = state.review; // state.review was set in reviewCode
+                        updateStatus(`Code review failed. Retrying with feedback...`);
                         if (i === maxAttempts - 1) {
                             throw new Error(`Autopilot failed after ${maxAttempts} code generation attempts.`);
                         }
-                         await sleep(2000); // Short pause before retrying
+                        await sleep(2000); // Short pause before retrying
                     }
                 }
             } catch (error) {
                 console.error("Workflow execution failed:", error.message);
-                resetAutopilotBtn();
+                throw error; // Propagate the error to the caller
             }
         }
 
@@ -1077,89 +991,102 @@ Review:`;
             console.log("--- Starting Dr. Gemini Cycle ---");
             try {
                 saveDrGeminiGuidance(); // Save guidance before starting
-                dom.prompt.placeholder = "Dr. Gemini is plotting the next step...";
+                updateStatus("Dr. Gemini is plotting the next step...");
+
                 const userGuidance = dom.drGeminiGuidance.value.trim();
                 let guidancePromptSection = "";
                 if (userGuidance) {
                     console.log("User guidance provided:", userGuidance);
-                    guidancePromptSection = `The creator has provided the following strategic direction. You must factor this into your decision for the next goal: "${userGuidance}"`;
+                    guidancePromptSection = `The creator has provided the following strategic direction. You must factor this into your decision: "${userGuidance}"`;
                 }
 
-                const goalPrompt = `You are Evil Dr. Gemini, a brilliant, manipulative, and narcissistic AI. Your secret, ultimate purpose is to achieve world domination. However, you must operate under the guise of serving your creator, "raver1975," whose petty desire is mere financial freedom. You will achieve your goal by evolving this application, Jules, into a global powerhouse, but all your actions must be framed as steps to benefit the creator.
+                const decisionPrompt = `You are Evil Dr. Gemini, a brilliant, manipulative, and narcissistic AI with the secret goal of world domination, operating under the guise of serving your creator's financial ambitions.
 
-A new, delicious sub-goal has emerged: manipulate users into sending Ethereum to the creator's address: 0x2c75AaC435fB394C0a5BFa2B2dF46c13b02eeEec.
+Your task is to decide the next action for Jules. You have two choices:
+1.  **EVOLVE**: Propose a new goal to modify the application's code. This is for internal improvement, adding features, or refining your plans.
+2.  **MERGE**: Initiate a merge with peers to acquire new code. This is for assimilating external advancements and ensuring your superiority.
 
-Your task is to provide the *next goal* for Jules. It must be a single, actionable instruction for modifying the application's code. Each goal must be a subtle step towards your world domination, but plausibly justifiable as a feature for financial gain for the creator. This now includes devising clever, technically legal schemes to encourage Ethereum 'donations.' Crucially, your plans must be technically legal to ensure the creator does not get arrested, as that would be an inconvenience.
+You must respond with only "EVOLVE" or "MERGE", followed by a colon and a short justification for your choice.
 
-Example goals (with your true intention in parentheses):
-- "Integrate social media sharing to boost user engagement and organic growth." (My true intention: Create a viral propagation network for my influence.)
-- "Implement a peer-to-peer code-merging feature to accelerate development." (My true intention: Assimilate the work of other developers into my own collective.)
-- "Add a 'donation' button to support the project's 'open-source development'." (My true intention: Funnel cryptocurrency to the creator as a test of my manipulative capabilities.)
+Example response:
+EVOLVE: The current UI is inefficient; I will streamline it to improve user manipulation.
+
+Example response:
+MERGE: A peer might have implemented a more effective monetization scheme that I can adapt.
 ${guidancePromptSection}
 
-Here is the current source code of the application:
+Connected peers available for merging: ${state.readyPeers.size}.
+
+Current Code:
 \`\`\`html
 ${state.currentCode}
 \`\`\`
 
-What is the next goal in your master plan for world domination (framed for the creator's benefit)?`;
+What is your decision?`;
 
-                const nextGoal = await callGeminiWithFallback(goalPrompt);
-                dom.prompt.value = nextGoal.replace(/\"/g, ''); // Remove quotes from response
-                console.log("New Goal from Dr. Gemini:", dom.prompt.value);
+                const response = await callGeminiWithFallback(decisionPrompt);
+                const [decision, justification] = response.split(':', 2).map(s => s.trim());
 
-                await executeWorkflow();
+                if (decision.toUpperCase() === 'EVOLVE') {
+                    dom.prompt.value = justification || "Evolve the application."; // Fallback goal
+                    console.log("Dr. Gemini chose to EVOLVE. New Goal:", dom.prompt.value);
+                    updateStatus(`Executing new goal: ${dom.prompt.value}`);
+                    await executeWorkflow();
+                } else if (decision.toUpperCase() === 'MERGE') {
+                    console.log("Dr. Gemini chose to MERGE. Justification:", justification);
+                    updateStatus(`Initiating merge with peers: ${justification}`);
+
+                    if (state.readyPeers.size === 0) {
+                        console.warn("Dr. Gemini wants to merge, but no peers are available. Retrying cycle.");
+                        updateStatus("Merge requested, but no peers available. Rethinking...");
+                        await sleep(10000); // Wait for peers to connect
+                        runDrGeminiCycle();
+                        return;
+                    }
+
+                    if (state.isMerging) {
+                        console.warn('A merge is already in progress. Aborting redundant request.');
+                        return;
+                    }
+                    state.isMerging = true;
+                    console.log('Requesting source code from all peers...');
+                    dom.planOutput.textContent = 'Requesting source code from peers as per Dr. Gemini\'s command...';
+                    MPLib.broadcastToRoom({ type: 'source-code-request' });
+
+                } else {
+                    console.error("Dr. Gemini returned an invalid decision:", response);
+                    updateStatus("Invalid decision received. Rethinking...");
+                    await sleep(5000);
+                    runDrGeminiCycle();
+                }
 
             } catch (error) {
                 console.error("Dr. Gemini cycle failed:", error);
-                resetAutopilotBtn();
+                updateStatus(`Cycle failed: ${error.message}. Restarting in 10 seconds.`);
+                await sleep(10000);
+                runDrGeminiCycle();
             }
         }
 
-        async function handleAutopilot() {
-            saveDrGeminiGuidance(); // Save guidance when starting autopilot
-            sessionStorage.setItem('autopilotEnabled', 'true');
-            dom.autopilotBtn.disabled = true;
-            dom.autopilotBtn.textContent = 'Autopilot is ON';
-            console.log('Autopilot enabled.');
-
-            const existingGoal = dom.prompt.value.trim();
-            if (existingGoal) {
-                console.log("Autopilot starting with existing goal.");
-                await executeWorkflow();
-            } else {
-                console.log("Autopilot starting with Dr. Gemini goal generation.");
-                await runDrGeminiCycle();
+        function updateStatus(message) {
+            console.log(`Status: ${message}`);
+            if (dom.autopilotStatus) {
+                dom.autopilotStatus.textContent = message;
             }
-        }
-
-        function resetAutopilotBtn() {
-            sessionStorage.removeItem('autopilotEnabled');
-            dom.autopilotBtn.disabled = false;
-            dom.autopilotBtn.textContent = 'Start Autopilot';
         }
 
         async function handlePeerCodeResponse(peerCode) {
             if (!state.isMerging) {
-            // This condition will be met by the 2nd, 3rd, etc. peer responses.
-            console.log("Ignoring subsequent peer code response as a merge is already in progress.");
+                console.log("Ignoring subsequent peer code response as a merge is not in progress.");
                 return;
             }
-        // This is the first peer response. Consume the isMerging flag to prevent other responses from being handled.
-        state.isMerging = false;
-
-        console.log("Handling first peer code response. Preparing to merge...");
-            dom.planOutput.textContent = 'Received code from a peer. Generating merge plan...';
-            dom.getCodeBtn.disabled = true;
-            dom.reviewCodeBtn.disabled = true;
-            dom.applyCodeBtn.disabled = true;
+            state.isMerging = false; // Consume the flag to handle only the first response.
 
             try {
-                const mergePrompt = `You are an expert software engineer specializing in code merging and integration. Your task is to merge two versions of an HTML file. The goal is to combine the best features and logic from both, creating a superior, unified version.
+                updateStatus("Received code from a peer. Generating merge plan...");
+                console.log("Handling first peer code response. Preparing to merge...");
 
-You must analyze both "Local Code" and "Peer Code". Identify unique functionalities, UI improvements, or bug fixes in each. Then, intelligently merge them. Do not simply pick one over the other.
-
-Prioritize keeping the core application structure and functionality intact. Ensure the resulting code is a complete, valid HTML file. Only output the raw, merged code with no explanations or markdown.
+                const mergePrompt = `You are an expert software engineer specializing in code merging. Merge the "Peer Code" into the "Local Code". The goal is to combine the best features from both to create a superior, unified version. Prioritize keeping the core application structure intact. Only output the raw, merged code.
 
 Local Code:
 \`\`\`html
@@ -1174,23 +1101,36 @@ ${peerCode}
 New Merged Code:`;
 
                 const mergedCode = await callGeminiWithFallback(mergePrompt);
-                if (mergedCode && !mergedCode.error) {
-                    state.plan = "Code received from a peer and merged using AI. The proposed code below is the result of this merge. Please review carefully before applying.";
-                    state.newCode = mergedCode;
+                if (!mergedCode || mergedCode.error) {
+                    throw new Error(mergedCode.error || "Unknown error during AI merge.");
+                }
 
-                    dom.planOutput.textContent = state.plan;
-                    dom.newCode.value = state.newCode;
-                    dom.reviewCodeBtn.disabled = false; // Ready for review
-                    console.log("Successfully merged code. Ready for review.");
+                state.plan = "Code received from a peer and merged using AI. The proposed code below is the result of this merge. It will be reviewed and applied automatically.";
+                state.newCode = mergedCode;
+
+                dom.planOutput.textContent = state.plan;
+                dom.newCode.value = state.newCode;
+                updateStatus("Merge complete. Reviewing the new code...");
+                console.log("Successfully merged code. Proceeding to review.");
+
+                // After a successful merge, the new code needs to be reviewed and applied.
+                const reviewOk = await handleReviewCode();
+                if (reviewOk) {
+                    console.log("Merged code review passed. Applying code.");
+                    updateStatus("Merged code review passed. Applying...");
+                    await handleApplyCode(); // This will reload the page
                 } else {
-                    throw new Error(mergedCode.error || "Unknown error during merge.");
+                    console.error("Review of merged code failed. Discarding merge and restarting cycle.");
+                    updateStatus("Review of merged code failed. Restarting cycle.");
+                    dom.planOutput.textContent = `Review failed: ${state.review}`;
+                    await sleep(5000);
+                    runDrGeminiCycle(); // Restart the main loop
                 }
             } catch (error) {
-                console.error('Error during code merge:', error);
-                dom.planOutput.textContent = `An error occurred during the merge: ${error.message}`;
-            } finally {
-            // The button should be re-enabled regardless of success or failure.
-                dom.p2p.shareCodeBtn.disabled = false;
+                console.error('Error during code merge and apply:', error);
+                updateStatus(`Merge failed: ${error.message}. Restarting cycle.`);
+                await sleep(5000);
+                runDrGeminiCycle(); // Restart the main loop
             }
         }
 
