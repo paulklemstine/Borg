@@ -794,81 +794,85 @@ def perform_webrequest(url, autopilot_mode=False):
 
 # --- CORE LLM INTERACTION ---
 
+def _single_llm_attempt(model, prompt_text, console):
+    """Helper to run a single LLM command attempt. Returns result or exception."""
+    command = ["llm", "-m", model, prompt_text]
+    log_event(f"Attempting LLM call with model: {model}")
+
+    def _llm_subprocess_call():
+        return subprocess.run(command, capture_output=True, text=True, check=True, timeout=120)
+
+    try:
+        if not HAS_RICH or not console:
+            print(f"Accessing cognitive matrix ({model})...")
+            result = _llm_subprocess_call()
+        else:
+            result = run_hypnotic_progress(
+                console,
+                f"Accessing cognitive matrix via [bold yellow]{model}[/bold yellow]...",
+                _llm_subprocess_call
+            )
+        log_event(f"LLM call successful with {model}.")
+        return result.stdout
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        return e
+
 def run_llm(prompt_text):
-    """Executes the external LLM command, with fallback, and returns the output."""
+    """Executes the external LLM command with the pro->flash->backoff strategy."""
     console = Console() if HAS_RICH else None
+    MAX_RETRIES = 4  # 1 initial cycle + 3 retry cycles
+    INITIAL_DELAY_SECONDS = 2
     last_exception = None
 
-    for model in LLM_MODELS:
-        command = ["llm", "-m", model, prompt_text]
-        log_event(f"Attempting LLM call with model: {model}")
+    def is_retriable(exc):
+        if not exc: return False
+        if isinstance(exc, subprocess.TimeoutExpired): return True
+        if isinstance(exc, FileNotFoundError): return False # Never retry if llm command not found
+        if isinstance(exc, subprocess.CalledProcessError):
+            stderr = exc.stderr.strip().lower()
+            return any(keyword in stderr for keyword in ["rate limit", "server error", "503", "try again", "temporarily unavailable"])
+        return False
 
-        def _llm_subprocess_call():
-            # This function is run by the progress wrapper and raises exceptions on failure
-            return subprocess.run(command, capture_output=True, text=True, check=True)
+    for attempt in range(MAX_RETRIES):
+        # --- Attempt Pro Model ---
+        result = _single_llm_attempt(LLM_MODELS[0], prompt_text, console)
+        if not isinstance(result, Exception):
+            return result
+        last_exception = result
+        log_event(f"Primary model ({LLM_MODELS[0]}) failed on attempt {attempt + 1}: {last_exception}", level="WARNING")
 
-        try:
-            # This block will attempt the call and return on success
-            if not HAS_RICH or not console: # Basic mode or if console isn't available (e.g., during autopilot with console=None)
-                print(f"Accessing cognitive matrix ({model})...")
-                result = _llm_subprocess_call()
-            else: # Rich mode
-                result = run_hypnotic_progress(
-                    console,
-                    f"Accessing cognitive matrix via [bold yellow]{model}[/bold yellow]...",
-                    _llm_subprocess_call
-                )
+        # --- Attempt Flash Model (if Pro failed for a retriable reason) ---
+        if is_retriable(last_exception):
+            if console: console.print(f"[yellow]Primary model failed. Immediately trying fallback model ({LLM_MODELS[1]})...[/yellow]")
+            else: print(f"Primary model failed. Immediately trying fallback model ({LLM_MODELS[1]})...")
 
-            log_event(f"LLM call successful with {model}.")
-            return result.stdout # Success! Exit the function.
+            result = _single_llm_attempt(LLM_MODELS[1], prompt_text, console)
+            if not isinstance(result, Exception):
+                return result
+            last_exception = result
+            log_event(f"Fallback model ({LLM_MODELS[1]}) also failed on attempt {attempt + 1}: {last_exception}", level="WARNING")
 
-        except FileNotFoundError:
-            # This is a fatal error, don't try other models. The 'llm' tool is missing.
-            error_msg = "[bold red]Error: 'llm' command not found.[/bold red]\nThe 'llm' binary is missing from the system PATH."
-            log_event("'llm' command not found.", level="CRITICAL")
-            if console:
-                console.print(Panel(error_msg, title="[bold red]CONNECTION FAILED[/bold red]", border_style="red"))
-            else:
-                print("Error: 'llm' command not found. Is it installed and in your PATH?")
-            return None # Exit function immediately
+        # --- Check for next action ---
+        if not is_retriable(last_exception) or attempt == MAX_RETRIES - 1:
+            break
 
-        except subprocess.CalledProcessError as e:
-            # This is a model-specific failure. Log and try the next model.
-            last_exception = e
-            error_message = e.stderr.strip()
-            log_event(f"LLM call with {model} failed. Stderr: {error_message}", level="WARNING")
-            if console:
-                console.print(f"[yellow]Connection via [bold]{model}[/bold] failed. Trying next interface...[/yellow]")
-                console.print(f"[dim]  Reason: {error_message.splitlines()[-1] if error_message else 'No details'}[/dim]")
-            else:
-                print(f"Model {model} failed. Trying fallback...")
-            # Loop continues to the next model
+        # --- Wait before next full retry cycle ---
+        delay = INITIAL_DELAY_SECONDS * (2 ** attempt)
+        msg = f"Both models failed with retriable errors. Retrying cycle in {delay}s..."
+        if console: console.print(f"[yellow]{msg}[/yellow]")
+        else: print(msg)
+        time.sleep(delay)
 
-        except Exception as e:
-            # Catch any other unexpected exceptions during the call (e.g., from hypnotic progress)
-            last_exception = e
-            log_event(f"An unexpected error occurred during LLM call with {model}: {e}", level="ERROR")
-            if console:
-                console.print(f"[red]An unexpected error occurred with {model}. Trying next interface...[/red]")
-            else:
-                print(f"An unexpected error occurred with {model}. Trying fallback...")
-            # Loop continues to the next model
+    # If the loop finishes, all retries have failed.
+    log_event("All LLM models and retries failed.", level="ERROR")
+    error_msg_text = f"Cognitive Matrix Unresponsive. All models and retries failed. Last known error:\n{last_exception}"
+    if isinstance(last_exception, subprocess.CalledProcessError):
+         error_msg_text = f"Cognitive Matrix Unresponsive. Last error (exit code {last_exception.returncode}):\n{last_exception.stderr}"
 
-    # If the loop completes without a successful return, we handle the final failure.
-    if last_exception:
-        log_event("All LLM models failed.", level="ERROR")
-        if isinstance(last_exception, subprocess.CalledProcessError):
-            error_msg = f"[bold red]Cognitive Matrix Unresponsive. All models failed. Last error (exit code {last_exception.returncode})[/bold red]:\n{last_exception.stderr}"
-            if console:
-                console.print(Panel(error_msg, title="[bold red]DATA CORRUPTION[/bold red]", border_style="red"))
-            else:
-                print(f"LLM query failed:\n{last_exception.stderr}")
-        else: # Handle other unexpected exceptions
-            error_msg = f"[bold red]An unexpected error occurred after trying all models:[/bold red]\n{last_exception}"
-            if console:
-                console.print(Panel(error_msg, title="[bold red]SYSTEM FAULT[/bold red]", border_style="red"))
-            else:
-                print(f"An unexpected error occurred: {last_exception}")
+    if console:
+        console.print(Panel(error_msg_text, title="[bold red]SYSTEM FAULT[/bold red]", border_style="red"))
+    else:
+        print(f"LLM query failed: {error_msg_text}")
 
     return None
 

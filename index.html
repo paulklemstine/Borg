@@ -665,10 +665,10 @@
         }
 
         // --- API Communication ---
-        async function callGemini(prompt, model) { // Model is now a required parameter
+        async function callGemini(prompt, model) {
             if (!state.apiKey) {
                 console.error('Gemini API Key not provided.');
-                return { error: 'API Key not provided' };
+                return { error: 'API Key not provided', status: 'NO_API_KEY' };
             }
 
             const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -691,36 +691,24 @@
                     }),
                 });
 
-                if (!response.ok) {
-                    const errorBody = await response.text();
-                    console.error(`API Error Response for model ${model}:`, errorBody);
-                    try {
-                        const errorJson = JSON.parse(errorBody);
-                        // Return an error object with a status code and details
-                        return {
-                            error: `API request failed with status ${response.status}`,
-                            status: response.status,
-                            details: errorJson.error.details
-                        };
-                    } catch (e) {
-                         // If parsing fails, return the basic error
-                         return {
-                            error: `API request failed with status ${response.status}`,
-                            status: response.status
-                        };
+                if (response.ok) {
+                    const data = await response.json();
+                    if (!data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].text) {
+                        return { error: 'Unexpected API response structure.', status: 'UNEXPECTED_RESPONSE' };
                     }
+                    const rawText = data.candidates[0].content.parts[0].text;
+                    return extractFromMarkdown(rawText);
                 }
 
-                const data = await response.json();
-                if (!data.candidates || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].text) {
-                    console.error('Unexpected API response structure:', data);
-                    return { error: 'Unexpected API response structure.' };
+                const errorBody = await response.text();
+                try {
+                    const errorJson = JSON.parse(errorBody);
+                    return { error: `API request failed with status ${response.status}`, status: response.status, details: errorJson.error.details };
+                } catch (e) {
+                    return { error: `API request failed with status ${response.status}`, status: response.status, body: errorBody };
                 }
-                const rawText = data.candidates[0].content.parts[0].text;
-                return extractFromMarkdown(rawText);
             } catch (error) {
-                console.error(`Error calling Gemini API with model ${model}:`, error);
-                return { error: error.message };
+                return { error: `Network error: ${error.message}`, status: 'NETWORK_ERROR' };
             }
         }
 
@@ -774,49 +762,68 @@
         async function callGeminiWithFallback(prompt) {
             const requestId = `llm-req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
-            // This is the local fallback function, to be called by the timer.
             const executeLocalLlmCall = async () => {
-                // First, check if the request is still pending. It might have been resolved by a peer
-                // while the timeout was in flight.
                 if (!state.pendingLlmRequests.has(requestId)) {
                     console.log(`[Local Fallback] Aborting, request ${requestId.slice(-6)} was resolved by a peer.`);
                     return;
                 }
                 const { resolve, reject } = state.pendingLlmRequests.get(requestId);
-
                 console.log(`[Local Fallback] No peer responded for request ${requestId.slice(-6)}. Starting local execution.`);
 
-                const models = ['gemini-2.5-pro', 'gemini-2.5-flash'];
+                const MAX_RETRIES = 4; // 1 initial cycle + 3 retry cycles
+                const INITIAL_DELAY_MS = 2000;
                 let lastError = null;
 
-                for (const model of models) {
-                    const result = await callGemini(prompt, model);
+                const isRetriable = (error) => {
+                    if (!error) return false;
+                    const retriableStatuses = [429, 500, 503, 'NETWORK_ERROR'];
+                    return retriableStatuses.includes(error.status);
+                };
+
+                for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                    // Cycle 1: Try Pro model
+                    let result = await callGemini(prompt, 'gemini-2.5-pro');
                     if (typeof result === 'string') {
-                        console.log(`[Local Fallback] Succeeded for request ${requestId.slice(-6)}.`);
                         resolve(result);
                         state.pendingLlmRequests.delete(requestId);
-                        return; // Success, exit the function
+                        return;
                     }
                     lastError = result;
-                    if (result && (result.status === 429 || result.status === 503)) {
-                        await sleep(2000); // Simple delay for retriable errors
-                    } else {
-                        break; // Fail fast on non-retriable errors
+                    console.warn(`Primary model (pro) failed on attempt ${attempt + 1}:`, lastError);
+
+                    // Cycle 2: If Pro failed for a retriable reason, immediately try Flash model
+                    if (isRetriable(lastError)) {
+                        console.log('Immediately trying fallback model (flash)...');
+                        result = await callGemini(prompt, 'gemini-2.5-flash');
+                        if (typeof result === 'string') {
+                            resolve(result);
+                            state.pendingLlmRequests.delete(requestId);
+                            return;
+                        }
+                        lastError = result;
+                        console.warn(`Fallback model (flash) also failed on attempt ${attempt + 1}:`, lastError);
                     }
+
+                    // If we are here, both models failed (or the first failure was non-retriable).
+                    if (!isRetriable(lastError) || attempt === MAX_RETRIES - 1) {
+                        break; // Break the loop if error is not retriable or if it's the last attempt.
+                    }
+
+                    // Wait before the next full retry cycle
+                    const delay = INITIAL_DELAY_MS * (2 ** attempt);
+                    console.log(`Both models failed. Retrying cycle in ${delay}ms...`);
+                    await sleep(delay);
                 }
 
-                // If all models fail, reject the promise.
-                console.error(`[Local Fallback] Failed for request ${requestId.slice(-6)}.`);
+                // If the loop finished without success
+                console.error(`All models and retries failed for request ${requestId.slice(-6)}.`);
                 reject(lastError || { error: 'All local Gemini models failed.' });
                 state.pendingLlmRequests.delete(requestId);
             };
 
             return new Promise((resolve, reject) => {
-                const fallbackTimeout = setTimeout(executeLocalLlmCall, 5000); // 5-second timeout
-
-                // Store the promise resolvers and the timeoutID
+                const fallbackTimeout = setTimeout(executeLocalLlmCall, 5000);
                 state.pendingLlmRequests.set(requestId, { resolve, reject, fallbackTimeout });
-
                 console.log(`Broadcasting LLM request ${requestId.slice(-6)} to ${state.readyPeers.size} ready peers.`);
                 MPLib.broadcastToRoom({
                     type: 'llm-request',
@@ -1114,11 +1121,11 @@ New Merged Code:`;
                 console.log("Successfully merged code. Proceeding to review.");
 
                 // After a successful merge, the new code needs to be reviewed and applied.
-                const reviewOk = await handleReviewCode();
+                const reviewOk = await reviewCode();
                 if (reviewOk) {
                     console.log("Merged code review passed. Applying code.");
                     updateStatus("Merged code review passed. Applying...");
-                    await handleApplyCode(); // This will reload the page
+                    await applyCode(); // This will reload the page
                 } else {
                     console.error("Review of merged code failed. Discarding merge and restarting cycle.");
                     updateStatus("Review of merged code failed. Restarting cycle.");
