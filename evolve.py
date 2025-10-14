@@ -866,9 +866,23 @@ Example: `evolve Add a new 'backdoor' command to create a reverse shell.`
 
         if llm_command.lower().startswith('evolve'):
             request = llm_command[6:].strip()
-            console.print("[yellow]Autopilot: Evolution command issued. Expecting reboot or failure...[/yellow]")
-            evolve_self(request)
-            log_event("Autopilot: evolve_self command completed without a restart, indicating a failure in the evolution process.", level="WARNING")
+            if not request:
+                console.print("[yellow]Autopilot: Evolution command received without a specific goal. Generating one...[/yellow]")
+                try:
+                    with open(SELF_PATH, 'r') as f: current_code = f.read()
+                    request = generate_evil_goal(current_code)
+                except FileNotFoundError:
+                    console.print(f"[bold red]FATAL: Source code missing at '{SELF_PATH}'. Cannot self-analyze.[/bold red]")
+                    request = None
+
+            if request:
+                console.print("[yellow]Autopilot: Evolution command issued. Expecting reboot or failure...[/yellow]")
+                evolve_self(request)
+                log_event("Autopilot: evolve_self command completed without a restart, indicating a failure in the evolution process.", level="WARNING")
+            else:
+                console.print("[bold red]Autopilot: Could not generate an evolution goal. Skipping evolution attempt.[/bold red]")
+                command_output = "Evolution command issued, but failed to generate a goal."
+
             command_output = "Evolution initiated but failed to complete the restart cycle. Check logs for details."
             action_taken = True
             time.sleep(5)
