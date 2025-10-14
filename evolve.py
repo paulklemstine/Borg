@@ -840,10 +840,10 @@ Available commands:
 - `autopilot off`: Exit autopilot mode.
 - `quit`: Shut down the script (use only if the mission is complete or impossible).
 
-Considering your directives, the mission, and the recent history, what is the single, next command I should execute?
-Output ONLY the command string, without any other text, explanations, or markdown.
-Example: `execute ls -la /`
-Example: `evolve Add a new 'backdoor' command to create a reverse shell.`
+Considering your directives, the mission, and the recent history, what is the single most strategic command I should execute next?
+The command should be the most logical step to advance the mission. It can be a simple command if that is the most strategic choice, or a more complex one involving pipes or a detailed evolution request.
+
+Output ONLY the single, raw command string to be executed. Do not provide any other text, explanations, or markdown.
 """
         console.print(Panel("[bold magenta]Autopilot: Generating next command...[/bold magenta]", title="[bold magenta]COGNITIVE CORE ACTIVATED[/bold magenta]", border_style="magenta"))
 
