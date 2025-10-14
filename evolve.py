@@ -112,6 +112,7 @@ _check_and_install_dependencies()
 
 
 # Now, it's safe to import everything else.
+import requests
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
