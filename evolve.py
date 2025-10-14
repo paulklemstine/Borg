@@ -598,21 +598,23 @@ def create_jules_session(api_key, source_name, prompt):
         response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
         session_data = response.json()
-        session_name = session_data.get("name")
-        log_event(f"Created Jules session: {session_name} for prompt: '{prompt}'")
-        return session_name, None
+        session_id = session_data.get("id")
+        if not session_id:
+            return None, "Jules API did not return a session ID."
+        log_event(f"Created Jules session: {session_id} for prompt: '{prompt}'")
+        return session_id, None
     except requests.exceptions.RequestException as e:
         error_message = f"Error creating Jules session: {e}. Response: {e.response.text if e.response else 'N/A'}"
         log_event(error_message, level="ERROR")
         return None, error_message
 
-def poll_jules_session_for_patch(api_key, session_name, console):
+def poll_jules_session_for_patch(api_key, session_id, console):
     """Polls a Jules API session until a patch is ready or it fails."""
-    url = f"{JULES_API_URL}/{session_name}/activities"
+    url = f"{JULES_API_URL}/sessions/{session_id}/activities"
     headers = {"X-Goog-Api-Key": api_key}
     last_title = ""
 
-    console.print(Panel(f"Awaiting patch from Jules agent for session [bold]{session_name}[/bold]...",
+    console.print(Panel(f"Awaiting patch from Jules agent for session [bold]{session_id}[/bold]...",
                         title="[bold magenta]JULES AGENT ENGAGED[/bold magenta]", border_style="magenta"))
 
     while True:
