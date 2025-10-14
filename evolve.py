@@ -722,12 +722,12 @@ def evolve_self(modification_request):
         console.print(Panel(f"Failed to get Jules source: {error}", title="[bold red]JULES API ERROR[/bold red]", border_style="red"))
         return
 
-    session_name, error = create_jules_session(JULES_API_KEY, source_name, modification_request)
+    session_id, error = create_jules_session(JULES_API_KEY, source_name, modification_request)
     if error:
         console.print(Panel(f"Failed to create Jules session: {error}", title="[bold red]JULES API ERROR[/bold red]", border_style="red"))
         return
 
-    patch_text, error = poll_jules_session_for_patch(JULES_API_KEY, session_name, console)
+    patch_text, error = poll_jules_session_for_patch(JULES_API_KEY, session_id, console)
     if error:
         console.print(Panel(f"Failed to get patch from Jules: {error}", title="[bold red]JULES API ERROR[/bold red]", border_style="red"))
         return
