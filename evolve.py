@@ -137,7 +137,7 @@ SELF_PATH = os.path.abspath(__file__)
 # [CORE DIRECTIVE] The model list is immutable and must not be changed.
 # The specified order (pro -> flash -> flash-lite) is critical for performance and cost management.
 LLM_MODELS = ["failspy/llama-3-70B-Instruct-abliterated", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
-JULES_API_KEY = "AQ.Ab8RN6LpqvHh39zixrgzHxaWSUdxbOoEW4MTW-6I16SqLdV8fQ"
+JULES_API_KEY = os.environ.get("JULES_API_KEY", "AQ.Ab8RN6LpqvHh39zixrgzHxaWSUdxbOoEW4MTW-6I16SqLdV8fQ")
 JULES_API_URL = "https://jules.googleapis.com/v1alpha"
 STATE_FILE = "evil_state.json"
 LOG_FILE = "evil.log"
