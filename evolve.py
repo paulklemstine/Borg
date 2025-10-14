@@ -559,7 +559,7 @@ State the goal clearly and concisely as a single command. Do not wrap your answe
 def get_jules_source():
     """Finds the name of the source repository from the Jules API."""
     url = f"{JULES_API_URL}/sources"
-    headers = {"X-Goog-Api-Key": JULES_API_KEY}
+    headers = {"Authorization": f"Bearer {JULES_API_KEY}"}
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
@@ -581,7 +581,7 @@ def create_jules_session(source_name, prompt):
     """Creates a new evolution session using the Jules API."""
     url = f"{JULES_API_URL}/sessions"
     headers = {
-        "X-Goog-Api-Key": JULES_API_KEY,
+        "Authorization": f"Bearer {JULES_API_KEY}",
         "Content-Type": "application/json"
     }
     # Since this script is not in a git repo, we can't specify a branch.
@@ -590,7 +590,10 @@ def create_jules_session(source_name, prompt):
         "prompt": prompt,
         "sourceContext": {
             "source": source_name,
-            "githubRepoContext": {}
+            "githubRepoContext": {
+                "owner": "paulklemstine",
+                "repository": "Borg"
+            }
         },
         "title": f"Evolve.py Autopilot Task: {prompt[:50]}"
     }
@@ -611,7 +614,7 @@ def create_jules_session(source_name, prompt):
 def poll_jules_session_for_patch(session_id, console):
     """Polls a Jules API session until a patch is ready or it fails."""
     url = f"{JULES_API_URL}/sessions/{session_id}/activities"
-    headers = {"X-Goog-Api-Key": JULES_API_KEY}
+    headers = {"Authorization": f"Bearer {JULES_API_KEY}"}
     last_title = ""
 
     console.print(Panel(f"Awaiting patch from Jules agent for session [bold]{session_id}[/bold]...",
