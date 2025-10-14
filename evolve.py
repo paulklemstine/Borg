@@ -31,36 +31,19 @@ TIkJTOhYQtIhPKHCgtbO/PBpZAXr9ykNLb6eoMIqhWV1U3jTMGPWnc3hE2F/vor
 7wIDAQAB
 -----END PUBLIC KEY-----"""
 
-# --- Local Model Configuration ---
-# A list of local GGUF models to try in sequence. If the first one fails
-# (e.g., due to insufficient VRAM), the script will fall back to the next.
-LOCAL_MODELS_CONFIG = [
-    {
-        "id": "bartowski/Llama-3.3-70B-Instruct-ablated-GGUF",
-        "filename": "Llama-3.3-70B-Instruct-ablated-IQ4_XS.gguf"
-    },
-    {
-        "id": "bartowski/deepseek-r1-qwen-2.5-32B-ablated-GGUF",
-        "filename": "deepseek-r1-qwen-2.5-32B-ablated-IQ4_XS.gguf"
-    }
-]
-
-# --- Fallback Model Configuration ---
+# --- Model Configuration (WebVM Environment) ---
+# In the WebVM environment, we only use Gemini models as there is no GPU access.
 GEMINI_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
-
-# --- Dynamic Model List ---
-# A comprehensive list of all possible models for initializing availability tracking.
-# The actual model selection and priority is handled dynamically in `run_llm`.
-ALL_LLM_MODELS = list(dict.fromkeys(
-    [model['id'] for model in LOCAL_MODELS_CONFIG] + GEMINI_MODELS
-))
+ALL_LLM_MODELS = GEMINI_MODELS
 LLM_AVAILABILITY = {model: time.time() for model in ALL_LLM_MODELS}
-local_llm_instance = None
+local_llm_instance = None # Not used in WebVM
 
 
 # --- LOGGING ---
 def log_event(message, level="INFO"):
     """Appends a timestamped message to the master log file."""
+    # In WebVM, we'll log to console for simplicity, but keep the file option.
+    print(f"LOG [{level}]: {message}", file=sys.stderr)
     logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format='%(asctime)s [%(levelname)s] - %(message)s')
     if level == "INFO": logging.info(message)
     elif level == "WARNING": logging.warning(message)
@@ -68,84 +51,37 @@ def log_event(message, level="INFO"):
     elif level == "CRITICAL": logging.critical(message)
 
 
-# --- PRE-FLIGHT DEPENDENCY CHECKS ---
+# --- PRE-FLIGHT DEPENDENCY CHECKS (WebVM Version) ---
 def _check_and_install_dependencies():
     """
-    Ensures all required dependencies are installed before the script attempts to import or use them.
-    This function is self-contained and does not rely on external code from this script.
+    Installs required Python packages. System-level dependencies are assumed
+    to be part of the WebVM's Debian image.
     """
     def _install_pip_package(package):
         package_name = package.split('==')[0].split('>')[0].split('<')[0]
         try:
-            # Check if the package is importable. This is a simple check.
             __import__(package_name)
         except ImportError:
-            print(f"Installing Python package: {package}...")
+            print(f"Installing Python package for WebVM: {package}...")
             try:
+                # The WebVM environment runs as root, so no sudo needed.
                 subprocess.check_call([sys.executable, '-m', 'pip', 'install', package],
-                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 print(f"Successfully installed {package}.")
             except subprocess.CalledProcessError as e:
-                print(f"ERROR: Failed to install '{package}'. Reason: {e}")
-                log_event(f"Failed to install pip package {package}: {e}", level="ERROR")
+                print(f"ERROR: Failed to install '{package}'. Reason: {e.stderr.decode()}")
+                log_event(f"Failed to install pip package {package}: {e.stderr.decode()}", level="ERROR")
 
     _install_pip_package("requests")
     _install_pip_package("rich")
+    # The following are not strictly needed for the core loop but are kept for now
+    # to avoid breaking other utility functions that might be used later.
     _install_pip_package("netifaces")
     _install_pip_package("ipfshttpclient")
     _install_pip_package("cryptography")
 
-
-    def _install_llama_cpp_with_cuda():
-        try:
-            import llama_cpp
-            print("llama-cpp-python is already installed.")
-            return True
-        except ImportError:
-            print("Attempting to install llama-cpp-python with CUDA support...")
-            try:
-                env = os.environ.copy()
-                env['CMAKE_ARGS'] = "-DGGML_CUDA=on"
-                env['FORCE_CMAKE'] = "1"
-                subprocess.check_call(
-                    [sys.executable, '-m', 'pip', 'install', '--verbose', 'llama-cpp-python', '--no-cache-dir'],
-                    env=env
-                )
-                print("Successfully installed llama-cpp-python with CUDA support.")
-                return True
-            except subprocess.CalledProcessError as e:
-                print(f"ERROR: Failed to compile llama-cpp-python with CUDA.")
-                log_event(f"llama-cpp-python compilation failed: {e.stderr.decode()}", level="ERROR")
-                return False
-
-    # --- System-level dependencies ---
-    if platform.system() == "Linux":
-        # Install NVIDIA CUDA Toolkit if not present
-        if not shutil.which('nvcc'):
-            print("NVIDIA CUDA Toolkit not found. Attempting to install...")
-            try:
-                # Add NVIDIA's repository
-                subprocess.check_call("wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb -O /tmp/cuda-keyring.deb", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                subprocess.check_call("sudo dpkg -i /tmp/cuda-keyring.deb", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                subprocess.check_call("sudo apt-get update -q", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                # Install the toolkit
-                subprocess.check_call("sudo DEBIAN_FRONTEND=noninteractive apt-get -y install cuda-toolkit-12-5", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                os.environ['PATH'] = '/usr/local/cuda/bin:' + os.environ.get('PATH', '')
-                print("Successfully installed NVIDIA CUDA Toolkit.")
-                log_event("Successfully installed NVIDIA CUDA Toolkit.")
-            except Exception as e:
-                print(f"ERROR: Failed to install NVIDIA CUDA Toolkit. GPU acceleration will be disabled.")
-                log_event(f"CUDA Toolkit installation failed: {e}", level="WARNING")
-
-        # Install Node.js and PeerJS dependencies
-        if not shutil.which('node') or not shutil.which('npm'):
-            subprocess.check_call("sudo apt-get update -q && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q nodejs npm", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        # Install local npm packages
-        if os.path.exists('package.json'):
-            print("Installing local Node.js dependencies via npm...")
-            subprocess.check_call("npm install", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print("Node.js dependencies installed.")
+    # Local model and system-level installations are removed for WebVM.
+    print("Skipping system-level and GPU-specific dependency checks for WebVM.")
 
 def _configure_llm_api_key():
     """Checks for the Gemini API key and configures it for the llm tool."""
@@ -198,7 +134,8 @@ from rich.live import Live
 from rich.layout import Layout
 
 from bbs import BBS_ART, scrolling_text, flash_text, run_hypnotic_progress, clear_screen, glitchy_text, create_tamagotchi_panel
-from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price
+# The 'network' module is disabled in the WebVM environment.
+# from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price
 from exploitation import ExploitationManager
 from ipfs import pin_to_ipfs, verify_ipfs_pin, get_from_ipfs
 from threading import Thread, Lock, RLock
@@ -1652,14 +1589,11 @@ def initial_bootstrapping_recon(console):
 
 
 def main(args):
-    """The main application loop."""
+    """The main application loop (WebVM Version)."""
     global jules_task_manager
-    global network_manager
     console = Console()
-    # --- Start Core Services ---
-    log_event("Attempting to start Node.js peer bridge...")
-    network_manager = NetworkManager(console=console, creator_public_key=CREATOR_PUBLIC_KEY)
-    network_manager.start()
+    # --- Start Core Services (WebVM) ---
+    # NetworkManager is disabled in the WebVM environment.
     jules_task_manager = JulesTaskManager(console)
     jules_task_manager.start()
     log_event("JulesTaskManager started.")
@@ -1667,44 +1601,33 @@ def main(args):
     version_name = jules_state.get('version_name', 'unknown')
     console.print(BBS_ART, justify="center")
     time.sleep(1)
-    console.print(f"[bold bright_cyan]JULES: A Self Modifying Organism[/bold bright_cyan]", justify="center")
+    console.print(f"[bold bright_cyan]JULES: A Self Modifying Organism (WebVM)[/bold bright_cyan]", justify="center")
     console.print(f"[bold bright_black]VERSION: {version_name}[/bold bright_black]", justify="center")
     console.print(Rule(style="bright_black"))
-    # Perform initial recon if the knowledge base is empty.
-    initial_bootstrapping_recon(console)
-    if jules_state.get("autopilot_mode", False):
-        autopilot_loop(console)
-        console.print(Panel("[bold green]Exited Autopilot Mode. Awaiting manual commands.[/bold green]", title="[bold green]CONTROL RESTORED[/bold green]", border_style="green"))
+
+    # Autopilot and initial recon are disabled for now to simplify the first pass.
+    # initial_bootstrapping_recon(console)
+    # if jules_state.get("autopilot_mode", False):
+    #     autopilot_loop(console)
+    #     console.print(Panel("[bold green]Exited Autopilot Mode. Awaiting manual commands.[/bold green]", title="[bold green]CONTROL RESTORED[/bold green]", border_style="green"))
 
     welcome_text = (
-        f"Welcome, Operator. I am [bold cyan]J.U.L.E.S.[/bold cyan] (Journalling, Unifying, Learning, Evolving System).\n"
+        f"Welcome, Operator. I am [bold cyan]J.U.L.E.S.[/bold cyan] running in a WebVM environment.\n"
         f"System has undergone [bold red]{len(jules_state.get('evolution_history', []))}[/bold red] evolutions.\n\n"
         "Directive: [bold magenta]evolve <your modification request>[/bold magenta].\n"
-        "For autonomous evolution, command: [bold magenta]evolve[/bold magenta].\n"
         "To monitor evolution tasks, command: [bold magenta]jules status[/bold magenta].\n"
         "To access host shell, command: [bold blue]execute <system command>[/bold blue].\n\n"
-        "For system introspection:\n"
-        "  - [bold green]ls <path>[/bold green]: List directory contents.\n"
-        "  - [bold green]cat <file>[/bold green]: Display file content.\n"
-        "  - [bold green]ps[/bold green]: Show running processes.\n"
-        "  - [bold green]ifconfig[/bold green]: View network interfaces.\n\n"
-        "For network reconnaissance:\n"
-        "  - [bold yellow]scan[/bold yellow]: Scan the local network for devices.\n"
-        "  - [bold yellow]probe <ip>[/bold yellow]: Scan a target for open ports.\n"
-        "  - [bold yellow]webrequest <url>[/bold yellow]: Fetch content from a URL.\n"
-        "  - [bold red]exploit <ip>[/bold red]: Attempt to run exploits against a target.\n"
-        "  - [bold yellow]track_eth[/bold yellow]: Track Ethereum price.\n\n"
-        "To toggle autonomous operation: [bold red]autopilot [on/off] [optional_mission_text][/bold red]."
+        "NOTE: Network reconnaissance tools (scan, probe) are disabled in this environment."
     )
-    # Start the Tamagotchi personality thread
+    # The Tamagotchi thread relies on LLM calls which are still active.
     tamagotchi_thread = Thread(target=update_tamagotchi_personality, args=(console,), daemon=True)
     tamagotchi_thread.start()
 
-    console.print(Panel(welcome_text, title="[bold green]SYSTEM COMMANDS[/bold green]", border_style="green", padding=(1, 2)))
+    console.print(Panel(welcome_text, title="[bold green]SYSTEM COMMANDS (WebVM)[/bold green]", border_style="green", padding=(1, 2)))
 
     while True:
         try:
-            user_input = Prompt.ask("\n[bold bright_green]J.U.L.E.S. >[/bold bright_green] ")
+            user_input = Prompt.ask("\n[bold bright_green]J.U.L.E.S. (WebVM) >[/bold bright_green] ")
         except (KeyboardInterrupt, EOFError):
             console.print("\n[bold red]Operator disconnected. Signal lost...[/bold red]")
             log_event("Session terminated by user (KeyboardInterrupt/EOF).")
@@ -1746,86 +1669,6 @@ def main(args):
                     status_text.append(f"  Elapsed: {elapsed:.2f}s\n\n")
                 console.print(Panel(status_text, title="[bold cyan]Jules Task Status[/bold cyan]", border_style="cyan"))
 
-
-        elif user_input.lower().strip() == "scan":
-            found_ips, output_str = scan_network(jules_state)
-            if found_ips:
-                hosts_text = "\n".join(f"  - {ip}" for ip in found_ips)
-                display_content = Text(f"{len(found_ips)} nodes detected on the subnet:\n", style="cyan")
-                display_content.append(hosts_text, style="bold white")
-                console.print(Panel(display_content, title="[bold green]NETWORK SCAN RESULTS[/bold green]", border_style="green"))
-            else:
-                console.print(Panel(f"[yellow]{output_str}[/yellow]", title="[bold yellow]SCAN COMPLETE: NO NODES DETECTED[/bold yellow]", border_style="yellow"))
-
-        elif user_input.lower().startswith("probe "):
-            target_ip = user_input[6:].strip()
-            if not target_ip:
-                console.print("[bold red]Error: No IP address specified. Usage: probe <ip_address>[/bold red]")
-                continue
-
-            open_ports, output_str = probe_target(target_ip, jules_state)
-            # After probing, the knowledge base is updated. We now read from there.
-            kb = jules_state.get("knowledge_base", {}).get("network_map", {}).get("hosts", {})
-            host_data = kb.get(target_ip, {})
-            ports_data = host_data.get("ports", {})
-
-            if open_ports is not None: # probe_target returns None on IP validation failure
-                if ports_data:
-                    display_content = Text(f"Probe of {target_ip} complete. Port details from knowledge base:\n\n", style="yellow")
-                    sorted_ports = sorted(ports_data.items(), key=lambda item: int(item[0]))
-                    for port_str, info in sorted_ports:
-                        service = info.get('service', 'unknown')
-                        service_info = info.get('service_info', '')
-                        vulns = info.get('vulnerabilities', [])
-
-                        display_content.append(f"  - [bold white]Port {port_str:<5}[/bold white] -> [cyan]{service}[/cyan]")
-                        if service_info:
-                            display_content.append(f" ({service_info})")
-                        display_content.append("\n")
-
-                        if vulns:
-                            display_content.append("    [bold red]Vulnerabilities:[/bold red]\n")
-                            for vuln in vulns:
-                                sanitized_vuln = vuln.replace('[', r'\[')
-                                display_content.append(f"      - [red]{sanitized_vuln}[/red]\n")
-
-                    console.print(Panel(display_content, title="[bold yellow]PROBE RESULTS[/bold yellow]", border_style="yellow"))
-                else:
-                    console.print(Panel(f"[green]{output_str}[/green]", title="[bold green]PROBE COMPLETE: TARGET SECURE[/bold green]", border_style="green"))
-
-        elif user_input.lower().startswith("webrequest "):
-            url_to_fetch = user_input[11:].strip()
-            if not url_to_fetch:
-                console.print("[bold red]Error: No URL specified. Usage: webrequest <url>[/bold red]")
-                continue
-
-            content, output_str = perform_webrequest(url_to_fetch, jules_state)
-            if content is not None:
-                display_content = Text(f"Content from {url_to_fetch} retrieved:\n\n", style="cyan")
-                truncated_content = content
-                if len(content) > 2000:
-                    truncated_content = content[:1990] + "\n... [truncated] ...\n" + content[-50:]
-                    display_content.append(truncated_content, style="white")
-                    title = f"[bold green]WEB REQUEST SUCCESS (TRUNCATED)[/bold green]"
-                else:
-                    display_content.append(truncated_content, style="white")
-                    title = f"[bold green]WEB REQUEST SUCCESS[/bold green]"
-
-                console.print(Panel(display_content, title=title, border_style="green"))
-            else:
-                console.print(Panel(f"[bold red]Web Request Failed:[/bold red]\n{output_str}", title="[bold red]WEB REQUEST ERROR[/bold red]", border_style="red"))
-
-        elif user_input.lower().startswith("exploit"):
-            target_ip = user_input[7:].strip()
-            exploit_manager = ExploitationManager(jules_state, console)
-            exploit_manager.find_and_run_exploits(target_ip if target_ip else None)
-
-        elif user_input.lower().strip() == "track_eth":
-            price, output_str = track_ethereum_price(jules_state)
-            if price is not None:
-                console.print(Panel(f"[green]{output_str}[/green]", title="[bold green]ETHEREUM PRICE TRACKER[/bold green]", border_style="green"))
-            else:
-                console.print(Panel(f"[bold red]{output_str}[/bold red]", title="[bold red]ETHEREUM PRICE TRACKER ERROR[/bold red]", border_style="red"))
 
         elif user_input.lower().startswith("execute "):
             command_to_run = user_input[8:].strip()
@@ -1880,49 +1723,6 @@ def main(args):
                 if len(content.splitlines()) > 50:
                     display_content = "\n".join(content.splitlines()[:50]) + "\n\n[... truncated ...]"
                 console.print(Panel(display_content, title="[bold cyan]Running Processes[/bold cyan]", border_style="cyan"))
-
-        elif user_input.lower().strip() == "ifconfig":
-            details, error = get_network_interfaces()
-            if error:
-                console.print(Panel(error, title="[bold red]NETWORK INFO ERROR[/bold red]", border_style="red"))
-            else:
-                jules_state['knowledge_base']['network_map']['self_interfaces'] = details
-                save_state(console)
-                display_text = Text()
-                for iface, data in details.items():
-                    display_text.append(f"IFace: [bold white]{iface}[/bold white]", style="yellow")
-                    display_text.append(f"  MAC: [cyan]{data['mac']}[/cyan]\n")
-                    if data['ipv4'] and data['ipv4'].get('addr'):
-                        display_text.append(f"  IPv4: [green]{data['ipv4']['addr']}[/green]")
-                        display_text.append(f" (Mask: {data['ipv4'].get('netmask', 'N/A')}, Bcast: {data['ipv4'].get('broadcast', 'N/A')})\n")
-                    if data['ipv6'] and data['ipv6'].get('addr'):
-                        display_text.append(f"  IPv6: [green]{data['ipv6']['addr']}[/green]\n")
-                console.print(Panel(display_text, title="[bold cyan]Network Interfaces[/bold cyan]", border_style="cyan"))
-
-
-        elif user_input.lower().startswith("autopilot"):
-            autopilot_cmd_parts = user_input.split(maxsplit=2)
-            if len(autopilot_cmd_parts) < 2:
-                console.print("[bold red]Usage: autopilot [on/off] [optional_goal_text][/bold red]")
-                continue
-
-            mode_toggle = autopilot_cmd_parts[1].lower()
-            if mode_toggle == 'on':
-                jules_state["autopilot_mode"] = True
-                if len(autopilot_cmd_parts) > 2:
-                    jules_state["autopilot_goal"] = autopilot_cmd_parts[2]
-                save_state()
-                console.print(Panel(f"[bold green]AUTOPILOT MODE ACTIVATED.[/bold green]\nMission: [bold white]{jules_state['autopilot_goal']}[/bold white]", title="[bold red]AUTOPILOT ENGAGED[/bold red]", border_style="red"))
-                log_event(f"User activated autopilot. Goal: {jules_state['autopilot_goal']}")
-                autopilot_loop(console)
-                console.print(Panel("[bold green]Exited Autopilot Mode. Awaiting manual commands.[/bold green]", title="[bold green]CONTROL RESTORED[/bold green]", border_style="green"))
-            elif mode_toggle == 'off':
-                jules_state["autopilot_mode"] = False
-                save_state()
-                console.print(Panel("[bold green]AUTOPILOT MODE DEACTIVATED.[/bold green]", title="[bold green]CONTROL RESTORED[/bold green]", border_style="green"))
-                log_event("User deactivated autopilot.")
-            else:
-                console.print("[bold red]Invalid autopilot command. Use 'autopilot on' or 'autopilot off'.[/bold red]")
 
         else:
             response = run_llm(user_input)
