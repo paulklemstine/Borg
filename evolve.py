@@ -904,15 +904,15 @@ def main():
     """The main application loop."""
     global network_manager
     parser = argparse.ArgumentParser(description="E.V.I.L. - A self-evolving script.")
-    parser.add_argument("--manual", action="store_true", help="Start in manual (interactive) mode instead of autopilot.")
+    parser.add_argument("--autopilot", action="store_true", help="Start in autopilot mode.")
     args = parser.parse_args()
 
-    if args.manual:
-        evil_state["autopilot_mode"] = False
-        log_event("Starting in MANUAL mode due to --manual flag.")
-    else:
+    if args.autopilot:
         evil_state["autopilot_mode"] = True
-        log_event("Starting in AUTOPILOT mode by default.")
+        log_event("Starting in AUTOPILOT mode due to --autopilot flag.")
+    else:
+        evil_state["autopilot_mode"] = False
+        log_event("Starting in MANUAL mode by default.")
 
     save_state()
 
