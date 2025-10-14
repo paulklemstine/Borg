@@ -590,6 +590,7 @@ def create_jules_session(api_key, source_name, prompt):
         "prompt": prompt,
         "sourceContext": {
             "source": source_name,
+            "githubRepoContext": {}
         },
         "title": f"Evolve.py Autopilot Task: {prompt[:50]}"
     }
