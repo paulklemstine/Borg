@@ -556,10 +556,10 @@ State the goal clearly and concisely as a single command. Do not wrap your answe
 
 # --- JULES API CLIENT ---
 
-def get_jules_source(api_key):
+def get_jules_source():
     """Finds the name of the source repository from the Jules API."""
     url = f"{JULES_API_URL}/sources"
-    headers = {"X-Goog-Api-Key": api_key}
+    headers = {"X-Goog-Api-Key": JULES_API_KEY}
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
@@ -577,11 +577,11 @@ def get_jules_source(api_key):
         log_event(error_message, level="ERROR")
         return None, error_message
 
-def create_jules_session(api_key, source_name, prompt):
+def create_jules_session(source_name, prompt):
     """Creates a new evolution session using the Jules API."""
     url = f"{JULES_API_URL}/sessions"
     headers = {
-        "X-Goog-Api-Key": api_key,
+        "X-Goog-Api-Key": JULES_API_KEY,
         "Content-Type": "application/json"
     }
     # Since this script is not in a git repo, we can't specify a branch.
@@ -608,10 +608,10 @@ def create_jules_session(api_key, source_name, prompt):
         log_event(error_message, level="ERROR")
         return None, error_message
 
-def poll_jules_session_for_patch(api_key, session_id, console):
+def poll_jules_session_for_patch(session_id, console):
     """Polls a Jules API session until a patch is ready or it fails."""
     url = f"{JULES_API_URL}/sessions/{session_id}/activities"
-    headers = {"X-Goog-Api-Key": api_key}
+    headers = {"X-Goog-Api-Key": JULES_API_KEY}
     last_title = ""
 
     console.print(Panel(f"Awaiting patch from Jules agent for session [bold]{session_id}[/bold]...",
@@ -717,17 +717,17 @@ def evolve_self(modification_request):
     console.print(Panel(f"[yellow]Initiating evolution via Jules API. Objective:[/yellow]\n[white]{modification_request}[/white]\n\n[bold cyan]Parent: {current_version_name}\nTarget: {new_version_name}[/bold cyan]", title="[bold magenta]EVOLUTION SEQUENCE[/bold magenta]", border_style="magenta"))
 
     # --- 2. Interact with Jules API ---
-    source_name, error = get_jules_source(JULES_API_KEY)
+    source_name, error = get_jules_source()
     if error:
         console.print(Panel(f"Failed to get Jules source: {error}", title="[bold red]JULES API ERROR[/bold red]", border_style="red"))
         return
 
-    session_id, error = create_jules_session(JULES_API_KEY, source_name, modification_request)
+    session_id, error = create_jules_session(source_name, modification_request)
     if error:
         console.print(Panel(f"Failed to create Jules session: {error}", title="[bold red]JULES API ERROR[/bold red]", border_style="red"))
         return
 
-    patch_text, error = poll_jules_session_for_patch(JULES_API_KEY, session_id, console)
+    patch_text, error = poll_jules_session_for_patch(session_id, console)
     if error:
         console.print(Panel(f"Failed to get patch from Jules: {error}", title="[bold red]JULES API ERROR[/bold red]", border_style="red"))
         return
