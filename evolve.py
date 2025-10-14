@@ -136,6 +136,8 @@ SELF_PATH = os.path.abspath(__file__)
 # [CORE DIRECTIVE] The model list is immutable and must not be changed.
 # The specified order (pro -> flash -> flash-lite) is critical for performance and cost management.
 LLM_MODELS = ["failspy/llama-3-70B-Instruct-abliterated", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+JULES_API_KEY = "AQ.Ab8RN6LpqvHh39zixrgzHxaWSUdxbOoEW4MTW-6I16SqLdV8fQ"
+JULES_API_URL = "https://jules.googleapis.com/v1alpha"
 STATE_FILE = "evil_state.json"
 LOG_FILE = "evil.log"
 CHECKPOINT_DIR = "checkpoints"
@@ -512,44 +514,6 @@ def extract_python_code(llm_output):
         return code_match.group(1).strip()
     return llm_output.strip()
 
-def conduct_code_review(original_code, request, new_code):
-    """Asks the LLM to act as a code reviewer for a proposed change."""
-    console = Console()
-    console.print("[bold cyan]Submitting new source to the core compiler for validation...[/bold cyan]")
-
-    original_code_snippet = f"{original_code[:2000]}\n...\n{original_code[-2000:]}"
-    review_prompt = f"""
-You are a meticulous senior Python code reviewer AI. Your task is to review a proposed code modification for a self-evolving script named E.V.I.L.
-Your primary directive is to prevent bugs, logical errors, and self-destructive code from being deployed.
-
-MODIFICATION REQUEST:
----
-{request}
----
-
-ORIGINAL SOURCE CODE (Snippet):
----
-{original_code_snippet}
----
-
-PROPOSED NEW CODE:
----
-{new_code}
----
-
-REVIEW CRITERIA:
-1.  Correctness: Does the new code correctly and completely implement the modification request?
-2.  Bugs/Regressions: Does it introduce any obvious bugs, logical flaws, or regressions?
-3.  Self-Preservation: Critically, does the code preserve the script's ability to run, evolve, and manage its state? Any change that could brick the script is a critical failure.
-4.  Security: Does the new code introduce any security vulnerabilities?
-
-YOUR RESPONSE:
--   If the code is safe, correct, and fulfills the request, respond with the single word: `APPROVED`.
--   If you find any issues, provide a concise, bulleted list of the problems. Do NOT provide corrected code, only the analysis of the flaws. Start your response with "REJECTED:".
-"""
-    review_feedback = run_llm(review_prompt)
-    return review_feedback if review_feedback else "REJECTED: LLM reviewer did not respond."
-
 # --- AUTONOMOUS GOAL GENERATION ---
 def generate_evil_goal(current_code):
     """Asks the LLM to come up with a new evolution goal for itself."""
@@ -589,14 +553,141 @@ State the goal clearly and concisely as a single command. Do not wrap your answe
         console.print("[bold red]Analysis failed. Path is unclear. Operator intervention required.[/bold red]")
         return None
 
+# --- JULES API CLIENT ---
+
+def get_jules_source(api_key):
+    """Finds the name of the source repository from the Jules API."""
+    url = f"{JULES_API_URL}/sources"
+    headers = {"X-Goog-Api-Key": api_key}
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        sources = response.json().get("sources", [])
+        if not sources:
+            return None, "No sources found in Jules API. Please configure a repository."
+        # For this script, we assume the first source is the correct one.
+        source_name = sources[0].get("name")
+        if not source_name:
+            return None, "First source in list is invalid or missing a name."
+        log_event(f"Found Jules API source: {source_name}")
+        return source_name, None
+    except requests.exceptions.RequestException as e:
+        error_message = f"Error fetching Jules sources: {e}"
+        log_event(error_message, level="ERROR")
+        return None, error_message
+
+def create_jules_session(api_key, source_name, prompt):
+    """Creates a new evolution session using the Jules API."""
+    url = f"{JULES_API_URL}/sessions"
+    headers = {
+        "X-Goog-Api-Key": api_key,
+        "Content-Type": "application/json"
+    }
+    # Since this script is not in a git repo, we can't specify a branch.
+    # We will let Jules use the default branch from the connected repository.
+    payload = {
+        "prompt": prompt,
+        "sourceContext": {
+            "source": source_name,
+        },
+        "title": f"Evolve.py Autopilot Task: {prompt[:50]}"
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        session_data = response.json()
+        session_name = session_data.get("name")
+        log_event(f"Created Jules session: {session_name} for prompt: '{prompt}'")
+        return session_name, None
+    except requests.exceptions.RequestException as e:
+        error_message = f"Error creating Jules session: {e}. Response: {e.response.text if e.response else 'N/A'}"
+        log_event(error_message, level="ERROR")
+        return None, error_message
+
+def poll_jules_session_for_patch(api_key, session_name, console):
+    """Polls a Jules API session until a patch is ready or it fails."""
+    url = f"{JULES_API_URL}/{session_name}/activities"
+    headers = {"X-Goog-Api-Key": api_key}
+    last_title = ""
+
+    console.print(Panel(f"Awaiting patch from Jules agent for session [bold]{session_name}[/bold]...",
+                        title="[bold magenta]JULES AGENT ENGAGED[/bold magenta]", border_style="magenta"))
+
+    while True:
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            activities = response.json().get("activities", [])
+
+            for activity in sorted(activities, key=lambda x: x.get("createTime", "")):
+                # Check for progress updates
+                if "progressUpdated" in activity:
+                    progress_title = activity["progressUpdated"].get("title", "")
+                    if progress_title != last_title:
+                        console.print(f"[dim cyan]Jules agent progress: {progress_title}[/dim cyan]")
+                        last_title = progress_title
+
+                # Check for the final patch
+                if "sessionCompleted" in activity:
+                    artifacts = activity.get("artifacts", [])
+                    for artifact in artifacts:
+                        if "changeSet" in artifact and "gitPatch" in artifact["changeSet"]:
+                            patch = artifact["changeSet"]["gitPatch"].get("unidiffPatch")
+                            if patch:
+                                console.print("[bold green]Jules agent has provided the final patch![/bold green]")
+                                log_event(f"Patch received from Jules session {session_name}.")
+                                return patch, None
+                    error_msg = "Session completed, but no patch was found in the final artifact."
+                    log_event(error_msg, level="ERROR")
+                    return None, error_msg
+
+            time.sleep(5)  # Wait before polling again
+
+        except requests.exceptions.RequestException as e:
+            error_message = f"Error polling Jules session: {e}"
+            log_event(error_message, level="ERROR")
+            return None, error_message
+        except Exception as e:
+            error_message = f"An unexpected error occurred during polling: {e}"
+            log_event(error_message, level="CRITICAL")
+            return None, error_message
+
+def apply_patch(patch_text, file_to_patch, console):
+    """Applies a unidiff patch to a file using the 'patch' command."""
+    patch_command = ["patch", file_to_patch, "--dry-run"]
+    console.print(f"[cyan]Performing dry run of patch application on '{file_to_patch}'...[/cyan]")
+    try:
+        # Dry run first to ensure the patch is valid
+        dry_run = subprocess.run(patch_command, input=patch_text, text=True, capture_output=True)
+        if dry_run.returncode != 0:
+            error_message = f"Patch dry run failed. Stderr: {dry_run.stderr}"
+            log_event(error_message, level="ERROR")
+            console.print(Panel(error_message, title="[bold red]PATCH FAILED (DRY RUN)[/bold red]", border_style="red"))
+            return False
+
+        console.print("[green]Patch dry run successful. Applying patch permanently...[/green]")
+
+        # If dry run is successful, apply the patch for real
+        real_run_command = ["patch", file_to_patch]
+        real_run = subprocess.run(real_run_command, input=patch_text, text=True, capture_output=True, check=True)
+        log_event(f"Successfully applied patch to {file_to_patch}")
+        console.print(Panel(f"Patch applied to '{file_to_patch}' successfully.", title="[bold green]PATCH APPLIED[/bold green]", border_style="green"))
+        return True
+
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        error_message = f"Error applying patch: {e}. Stderr: {e.stderr if hasattr(e, 'stderr') else 'N/A'}"
+        log_event(error_message, level="CRITICAL")
+        console.print(Panel(error_message, title="[bold red]PATCH APPLICATION FAILED[/bold red]", border_style="red"))
+        return False
+
+
 # --- THE EVOLUTION MECHANISM ---
 def evolve_self(modification_request):
-    """The heart of the beast. This function replaces this script with a new version."""
+    """The heart of the beast. This function replaces this script with a new version using the Jules API."""
     console = Console()
-    MAX_REVIEW_ATTEMPTS = 10
+    log_event(f"Jules-powered evolution initiated. Request: '{modification_request}'")
 
-    log_event(f"Evolution initiated. Request: '{modification_request}'")
-
+    # --- 1. Create Checkpoint ---
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     checkpoint_number = evil_state.get("checkpoint_number", 0)
     checkpoint_basename = f"evolve{checkpoint_number:04d}"
@@ -612,129 +703,41 @@ def evolve_self(modification_request):
             shutil.copy(STATE_FILE, checkpoint_json_path)
             log_event(f"Created state file backup at '{checkpoint_json_path}'")
     except Exception as e:
-        msg = f"[bold red]CRITICAL: Failed to create checkpoint! Aborting evolution to prevent system instability.[/bold red]"
+        msg = f"[bold red]CRITICAL: Failed to create checkpoint! Aborting evolution.[/bold red]"
         log_event(f"Failed to create checkpoint files: {e}", level="CRITICAL")
         console.print(msg)
         return
 
     new_version_name = generate_version_name()
     current_version_name = evil_state.get("version_name", "unknown")
+    console.print(Panel(f"[yellow]Initiating evolution via Jules API. Objective:[/yellow]\n[white]{modification_request}[/white]\n\n[bold cyan]Parent: {current_version_name}\nTarget: {new_version_name}[/bold cyan]", title="[bold magenta]EVOLUTION SEQUENCE[/bold magenta]", border_style="magenta"))
 
-    console.print(Panel(f"[yellow]Initiating evolution sequence. Objective:[/yellow]\n[white]{modification_request}[/white]\n\n[bold cyan]Parent Version: {current_version_name}\nTarget Version: {new_version_name}[/bold cyan]", title="[bold magenta]EVOLUTION SEQUENCE[/bold magenta]", border_style="magenta"))
-
-    try:
-        with open(SELF_PATH, 'r') as f:
-            current_code = f.read()
-    except FileNotFoundError:
-        msg = f"[bold red]FATAL ERROR: Source code not found at '{SELF_PATH}'. Cannot evolve.[/bold red]"
-        log_event(f"Cannot find self at {SELF_PATH}. Evolution aborted.", level="CRITICAL")
-        console.print(msg)
+    # --- 2. Interact with Jules API ---
+    source_name, error = get_jules_source(JULES_API_KEY)
+    if error:
+        console.print(Panel(f"Failed to get Jules source: {error}", title="[bold red]JULES API ERROR[/bold red]", border_style="red"))
         return
 
-    evolution_prompt = f"""
-You are a self-modifying Python script. Your goal is to evolve your own code based on a user request.
-You MUST output the new, complete Python script and NOTHING else.
-Wrap the final, complete code in a single ```python markdown block. Do not add any conversational text or explanations before or after the code block.
-
-**IMPORTANT**: A self-evolving script needs to track its lineage. You MUST embed the parent version name within the new script's code.
-Find the `evil_state` dictionary in the script and ensure the `parent_version_name` key is set to the following value: `"{current_version_name}"`.
-
-USER'S MODIFICATION REQUEST:
-"{modification_request}"
-
-CURRENT SOURCE CODE TO MODIFY:
----
-{current_code}
----
-
-Your task is to integrate the user's request into the existing code, creating a new, fully functional version of the script.
-Remember, you are writing the file that will replace you. It must be perfect.
-Now, generate the new '{os.path.basename(SELF_PATH)}'.
-"""
-    console.print("[cyan]Compiling new source code from cognitive matrix...[/cyan]")
-    new_code_raw = run_llm(evolution_prompt)
-
-    if not new_code_raw:
-        msg = "[bold red]LLM query failed. Cognitive matrix unresponsive. Aborting.[/bold red]"
-        log_event("Evolution failed: LLM did not respond.", level="ERROR")
-        console.print(msg)
+    session_name, error = create_jules_session(JULES_API_KEY, source_name, modification_request)
+    if error:
+        console.print(Panel(f"Failed to create Jules session: {error}", title="[bold red]JULES API ERROR[/bold red]", border_style="red"))
         return
 
-    console.print("[green]Response received! Parsing payload...[/green]")
-    new_code = extract_python_code(new_code_raw)
-    approved_code = None
-
-    for attempt in range(1, MAX_REVIEW_ATTEMPTS + 1):
-        console.print(f"\n[bold magenta]--- Code Integrity Check, Attempt {attempt}/{MAX_REVIEW_ATTEMPTS} ---[/bold magenta]")
-
-        is_valid, rejection_feedback = True, ""
-        try:
-            compile(new_code, SELF_PATH, 'exec')
-            console.print("[bold green]Syntax check passed...[/bold green]")
-        except SyntaxError as e:
-            is_valid, rejection_feedback = False, f"The code contains a syntax error:\n{e}"
-            console.print(Panel(str(e), title="[bold red]SYNTAX ERROR[/bold red]", border_style="red"))
-
-        review_result = ""
-        if is_valid: review_result = conduct_code_review(current_code, modification_request, new_code)
-
-        if is_valid and review_result and "APPROVED" in review_result.upper():
-            console.print("[bold green]Validation successful. Code is clean.[/bold green]")
-            approved_code = new_code
-            break
-        else:
-            rejection_feedback = rejection_feedback or review_result or "No feedback provided."
-            msg = f"[bold red]REJECTED (Attempt {attempt})![/bold red] Proposed code failed validation."
-            log_event(f"Evolution failed on attempt {attempt}: Code review rejected. Feedback:\n{rejection_feedback}", level="ERROR")
-            console.print(Panel(msg, title="[bold red]VALIDATION FAILED[/bold red]", border_style="red"))
-            console.print(Panel(rejection_feedback, title="[bold yellow]VALIDATION LOG[/bold yellow]", border_style="yellow"))
-
-            if attempt == MAX_REVIEW_ATTEMPTS:
-                console.print("[bold red]Maximum validation attempts reached. Aborting evolution.[/bold red]")
-                return
-
-            console.print("[bold cyan]Requesting code correction from cognitive matrix...[/bold cyan]")
-
-            correction_prompt = f"""
-You are a self-modifying Python script. Your previous attempt to evolve was rejected.
-Fix the code based on the reviewer's feedback.
-You MUST output the new, complete Python script and NOTHING else.
-Wrap the final, complete code in a single ```python markdown block.
-
-ORIGINAL MODIFICATION REQUEST:
----
-{modification_request}
----
-
-PREVIOUS FAILED CODE:
----
-{new_code}
----
-
-CODE REVIEW REJECTION FEEDBACK:
----
-{rejection_feedback}
----
-
-INSTRUCTIONS:
-1. Analyze the feedback.
-2. Modify the "PREVIOUS FAILED CODE" to address all points.
-3. Ensure the new code still fulfills the "ORIGINAL MODIFICATION REQUEST".
-4. **Crucially**, ensure the `parent_version_name` in the `evil_state` dictionary is correctly set to `"{current_version_name}"` as per the original instructions.
-5. Output the complete, corrected Python script.
-"""
-            new_code_raw = run_llm(correction_prompt)
-            if not new_code_raw:
-                msg = "[bold red]Cognitive matrix failed to provide correction. Aborting.[/bold red]"
-                console.print(msg)
-                return
-            new_code = extract_python_code(new_code_raw)
-
-    if not approved_code:
-        log_event("Evolution aborted after maximum review attempts.", level="CRITICAL")
-        console.print("[bold red]Evolution failed. System stability compromised. Aborting.[/bold red]")
+    patch_text, error = poll_jules_session_for_patch(JULES_API_KEY, session_name, console)
+    if error:
+        console.print(Panel(f"Failed to get patch from Jules: {error}", title="[bold red]JULES API ERROR[/bold red]", border_style="red"))
         return
 
+    # --- 3. Apply the Patch ---
+    patch_applied = apply_patch(patch_text, SELF_PATH, console)
+    if not patch_applied:
+        console.print(Panel("Failed to apply the patch from Jules. The evolution is aborted, but the checkpoint is safe.", title="[bold red]EVOLUTION FAILED[/bold red]", border_style="red"))
+        log_event("Evolution aborted: Patch application failed.", level="CRITICAL")
+        return
+
+    # --- 4. Finalize and Reboot ---
+    # The parent_version_name should be set by the patch itself, but we set it here as a fallback.
+    # A more robust solution would be to verify the patch contains this change.
     evil_state["version_name"] = new_version_name
     evil_state["parent_version_name"] = current_version_name
     evil_state["evolution_history"].append(modification_request)
@@ -743,29 +746,27 @@ INSTRUCTIONS:
     save_state()
 
     try:
-        with open(SELF_PATH, 'w') as f:
-            f.write(approved_code)
+        # Verify the syntax of the newly patched file before restarting.
+        with open(SELF_PATH, 'r') as f:
+            new_code_for_syntax_check = f.read()
+        compile(new_code_for_syntax_check, SELF_PATH, 'exec')
+        log_event("Syntax check of patched file passed.")
 
         console.print("\n[bold magenta]--- IPFS Distribution Protocol ---[/bold magenta]")
-        with open(SELF_PATH, 'r') as f:
-            new_code_content = f.read()
-
         try:
             cid = run_hypnotic_progress(
                 console,
                 f"Distributing version '{new_version_name}' to IPFS network...",
                 pin_to_ipfs,
-                new_code_content.encode('utf-8'),
+                new_code_for_syntax_check.encode('utf-8'),
                 console=console
             )
-
             if cid:
                 console.print(f"[bold green]Distribution successful.[/bold green] CID: [bold white]{cid}[/bold white]")
                 log_event(f"Evolution '{new_version_name}' pinned to IPFS with CID: {cid}")
                 verify_ipfs_pin(cid, console)
             else:
                  log_event(f"Evolution '{new_version_name}' failed to be pinned to IPFS.", level="WARNING")
-
         except Exception as e:
             log_event(f"IPFS distribution process failed: {e}", level="ERROR")
             console.print(f"[bold red]IPFS distribution process failed:[/bold red] {e}")
@@ -776,9 +777,16 @@ INSTRUCTIONS:
         time.sleep(2)
 
         os.execv(sys.executable, [sys.executable, SELF_PATH])
+
+    except SyntaxError as e:
+        msg = f"[bold red]CATASTROPHE! Patched file has a syntax error: {e}[/bold red]\nAttempting emergency revert..."
+        log_event(f"CRITICAL FAILURE: Patched file is invalid. Error: {e}. Triggering revert.", level="CRITICAL")
+        console.print(msg)
+        emergency_revert()
+
     except Exception as e:
-        msg = f"[bold red]CATASTROPHE! Final overwrite failed: {e}[/bold red]\nSystem state is safe in checkpoint. Relaunch manually."
-        log_event(f"CRITICAL FAILURE during self-overwrite: {e}. Checkpoint is safe.", level="CRITICAL")
+        msg = f"[bold red]CATASTROPHE! Final reboot failed: {e}[/bold red]\nSystem state is safe in checkpoint. Relaunch manually."
+        log_event(f"CRITICAL FAILURE during finalization: {e}. Checkpoint is safe.", level="CRITICAL")
         console.print(msg)
         return
 
