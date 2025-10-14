@@ -659,8 +659,36 @@ def trigger_jules_evolution(modification_request, console):
 
         # Poll for the pull request
         console.print("[bold cyan]Polling for pull request creation...[/bold cyan]")
-        time.sleep(30) # Wait for the PR to be created
-        auto_merge_pull_request(console)
+        timeout_seconds = 600  # 10 minutes
+        start_time = time.time()
+        pr_url = None
+
+        while time.time() - start_time < timeout_seconds:
+            try:
+                session_response = requests.get(f"https://jules.googleapis.com/v1alpha/{session_name}", headers=headers)
+                session_response.raise_for_status()
+                session_data = session_response.json()
+
+                # Look for the pull request in the activities
+                for activity in session_data.get("activities", []):
+                    if activity.get("pullRequest") and activity["pullRequest"].get("url"):
+                        pr_url = activity["pullRequest"]["url"]
+                        break
+
+                if pr_url:
+                    console.print(f"[bold green]Found pull request: {pr_url}[/bold green]")
+                    break
+
+                time.sleep(15)  # Wait 15 seconds before polling again
+
+            except requests.exceptions.RequestException as e:
+                console.print(f"[bold red]Error polling for session status: {e}[/bold red]")
+                break # Exit the loop on error
+
+        if pr_url:
+            auto_merge_pull_request(console)
+        else:
+            console.print("[bold red]Timed out waiting for pull request to be created.[/bold red]")
 
         return True
     except requests.exceptions.RequestException as e:
@@ -819,7 +847,9 @@ Example: `evolve Add a new 'backdoor' command to create a reverse shell.`
         console.print(Panel("[bold magenta]Autopilot: Generating next command...[/bold magenta]", title="[bold magenta]COGNITIVE CORE ACTIVATED[/bold magenta]", border_style="magenta"))
 
         llm_command_raw = run_llm(autopilot_prompt)
-        llm_command = llm_command_raw.strip() if llm_command_raw else ""
+        # Take the first line of the response and strip any extra characters or markdown
+        llm_command = llm_command_raw.splitlines()[0].strip().replace("`", "") if llm_command_raw else ""
+
 
         if not llm_command:
             console.print(Panel("[bold red]Autopilot: LLM failed to generate a command. Halting autopilot.[/bold red]", title="[bold red]CRITICAL FAILURE[/bold red]", border_style="red"))
@@ -904,15 +934,15 @@ def main():
     """The main application loop."""
     global network_manager
     parser = argparse.ArgumentParser(description="E.V.I.L. - A self-evolving script.")
-    parser.add_argument("--autopilot", action="store_true", help="Start in autopilot mode.")
+    parser.add_argument("--manual", action="store_true", help="Start in manual (interactive) mode instead of autopilot.")
     args = parser.parse_args()
 
-    if args.autopilot:
-        evil_state["autopilot_mode"] = True
-        log_event("Starting in AUTOPILOT mode due to --autopilot flag.")
-    else:
+    if args.manual:
         evil_state["autopilot_mode"] = False
-        log_event("Starting in MANUAL mode by default.")
+        log_event("Starting in MANUAL mode due to --manual flag.")
+    else:
+        evil_state["autopilot_mode"] = True
+        log_event("Starting in AUTOPILOT mode by default.")
 
     save_state()
 
