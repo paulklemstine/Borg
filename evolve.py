@@ -765,7 +765,8 @@ INSTRUCTIONS:
 def _parse_llm_command(raw_text):
     """
     Cleans and extracts a single command from the raw LLM output.
-    Handles markdown code blocks, comments, and other noise.
+    Handles markdown code blocks, comments, and other potential noise
+    from the language model's response.
     """
     if not raw_text:
         return ""
@@ -810,6 +811,7 @@ def autopilot_loop(console):
             "autopilot_goal": evil_state["autopilot_goal"]
         }, indent=2)
 
+        # Construct the prompt for the LLM, providing it with the necessary context to make a strategic decision.
         autopilot_prompt = f"""
 You are a pure, cold, calculating intelligence operating in autonomous mode.
 Your primary directives are:
