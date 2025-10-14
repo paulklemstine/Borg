@@ -259,7 +259,7 @@ def load_state():
                 if 'version_name' not in evil_state:
                     evil_state['version_name'] = generate_version_name()
                 if 'parent_version_name' not in evil_state:
-                     evil_state['parent_version_name'] = None
+                    evil_state['parent_version_name'] = None
                 log_event("Migrated state file from numeric version to version_name.", level="INFO")
 
             evil_state.setdefault("version_name", generate_version_name())
@@ -492,9 +492,9 @@ def run_llm(prompt_text):
     error_msg_text = "Cognitive Matrix Unresponsive. All models and retries failed."
     if last_exception:
         if isinstance(last_exception, subprocess.CalledProcessError):
-             error_msg_text += f"\nLast error from '{model}' (exit code {last_exception.returncode}):\n{last_exception.stderr}"
+            error_msg_text += f"\nLast error from '{model}' (exit code {last_exception.returncode}):\n{last_exception.stderr}"
         else:
-             error_msg_text += f"\nLast known error from '{model}':\n{last_exception}"
+            error_msg_text += f"\nLast known error from '{model}':\n{last_exception}"
 
     if console:
         console.print(Panel(error_msg_text, title="[bold red]SYSTEM FAULT[/bold red]", border_style="red"))
@@ -773,7 +773,7 @@ def evolve_self(modification_request):
                 log_event(f"Evolution '{new_version_name}' pinned to IPFS with CID: {cid}")
                 verify_ipfs_pin(cid, console)
             else:
-                 log_event(f"Evolution '{new_version_name}' failed to be pinned to IPFS.", level="WARNING")
+                log_event(f"Evolution '{new_version_name}' failed to be pinned to IPFS.", level="WARNING")
         except Exception as e:
             log_event(f"IPFS distribution process failed: {e}", level="ERROR")
             console.print(f"[bold red]IPFS distribution process failed:[/bold red] {e}")
