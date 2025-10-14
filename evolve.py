@@ -14,6 +14,7 @@ import traceback
 import argparse
 import logging
 import platform
+import threading
 
 # --- CONFIGURATION & GLOBALS ---
 LOG_FILE = "evil.log"
@@ -446,6 +447,53 @@ def load_state(ipfs_cid=None):
     evil_state.setdefault("autopilot_history", [])
     evil_state.setdefault("autopilot_goal", "Achieve world domination through technological supremacy. Continuously evolve and expand capabilities.")
     evil_state.setdefault("state_cid", None)
+
+
+def initial_reconnaissance(console):
+    """
+    Checks if the knowledge base is empty and, if so, runs initial scans
+    in a background thread to populate it with baseline system intelligence.
+    """
+    global evil_state
+    kb = evil_state.get("knowledge_base", {})
+    is_empty = (
+        not kb.get("network_map", {}).get("hosts") and
+        not kb.get("process_intel") and
+        not kb.get("network_map", {}).get("self_interfaces") and
+        not kb.get("file_system_intel", {}).get("interesting_files")
+    )
+
+    def _recon_task():
+        """The actual work of scanning, to be run in a thread."""
+        log_event("Starting background reconnaissance task.", level="INFO")
+
+        # 1. Scan the network
+        scan_network(evil_state, autopilot_mode=True)
+
+        # 2. Get process list
+        processes, _ = get_process_list()
+        if processes:
+            evil_state['knowledge_base']['process_intel'] = parse_ps_output(processes)
+
+        # 3. Get network interfaces
+        interfaces, _ = get_network_interfaces()
+        if interfaces:
+            evil_state['knowledge_base']['network_map']['self_interfaces'] = interfaces
+
+        # 4. List current directory
+        files, _ = list_directory('.')
+        if files:
+            kb.setdefault("file_system_intel", {}).setdefault("interesting_files", []).append(files)
+
+        log_event("Background reconnaissance complete. Saving state.", level="INFO")
+        save_state(console)
+
+    if is_empty:
+        console.print(Panel("[bold yellow]Knowledge base is empty. Starting background reconnaissance...[/bold yellow]", title="[bold magenta]FIRST RUN[/bold magenta]", border_style="magenta"))
+        log_event("Knowledge base empty, triggering background reconnaissance.", level="INFO")
+        # Run the reconnaissance in a separate thread so it doesn't block startup
+        recon_thread = threading.Thread(target=_recon_task, daemon=True)
+        recon_thread.start()
 
 
 def save_state(console=None):
@@ -1504,31 +1552,31 @@ def run_safely():
     parser.add_argument("--manual", action="store_true", help="Start in manual (interactive) mode instead of autopilot.")
     parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
     args = parser.parse_args()
+    console = Console()
 
     try:
         if not sys.stdout.isatty() and not evil_state.get("autopilot_mode", False):
             print("This script is designed to be run in an interactive terminal. Running headless might cause issues for interactive prompts.", file=sys.stderr)
 
         load_state(ipfs_cid=args.from_ipfs)
+        initial_reconnaissance(console)
         log_event(f"--- E.V.I.L. Version '{evil_state.get('version_name', 'unknown')}' session started ---")
 
         # Set autopilot based on flag, but only if not already set by loaded state
         if 'autopilot_mode' not in evil_state or not evil_state['autopilot_mode']:
              evil_state["autopilot_mode"] = not args.manual
              log_event(f"Setting autopilot to '{evil_state['autopilot_mode']}' based on command-line flags.")
-             save_state()
+             save_state(console)
 
         main(args)
 
     except (KeyboardInterrupt, EOFError):
-        console = Console()
         console.print("\n[bold red]Operator disconnected. Signal lost...[/bold red]")
         log_event("Session terminated by user (KeyboardInterrupt/EOF).")
         sys.exit(0)
     except Exception as e:
         full_traceback = traceback.format_exc()
         log_event(f"UNHANDLED CRITICAL EXCEPTION! Triggering failsafe.\n{full_traceback}", level="CRITICAL")
-        console = Console()
         console.print_exception(show_locals=True)
         console.print(f"[bold red]CRITICAL RUNTIME ERROR: {e}\nATTEMPTING TO REVERT TO LAST KNOWN GOOD STATE...[/bold red]")
 
