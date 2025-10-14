@@ -639,7 +639,7 @@ def poll_jules_session_for_patch(api_key, session_id, console):
                             patch = artifact["changeSet"]["gitPatch"].get("unidiffPatch")
                             if patch:
                                 console.print("[bold green]Jules agent has provided the final patch![/bold green]")
-                                log_event(f"Patch received from Jules session {session_name}.")
+                                log_event(f"Patch received from Jules session {session_id}.")
                                 return patch, None
                     error_msg = "Session completed, but no patch was found in the final artifact."
                     log_event(error_msg, level="ERROR")
