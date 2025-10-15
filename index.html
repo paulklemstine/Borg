@@ -2,7 +2,7 @@
 <html>
 <head>
     <title>J.U.L.E.S. - WebVM Environment</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
+    <!-- The xterm.css is loaded automatically by the esm.sh module -->
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
         #terminal-container { width: 100%; height: calc(100% - 40px); }
@@ -23,27 +23,26 @@
     <input type="file" id="file-input" multiple style="display: none;" />
     <button id="upload-button">Upload Project Files</button>
     <script type="module">
-        async function init() {
-            const { Terminal } = await import("https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js");
-            const WebVM = (await import("https://cdn.jsdelivr.net/npm/webvm@latest/dist/webvm.js")).default;
+        import { Terminal } from 'https://esm.sh/xterm@5.5.0';
+        import { FitAddon } from 'https://esm.sh/@xterm/addon-fit@0.10.0';
+        import WebVM from "https://cdn.jsdelivr.net/npm/webvm@latest/dist/webvm.js";
 
-            const terminal = new Terminal({ cursorBlink: true });
+        async function init() {
+            const terminal = new Terminal({ cursorBlink: true, convertEol: true });
+            const fitAddon = new FitAddon();
+            terminal.loadAddon(fitAddon);
+
             const webvm = new WebVM({
                 "cmd": "/bin/bash",
                 "args": ["--login"],
-                "env": {
-                    "HOME": "/home/user",
-                    "TERM": "xterm-256color"
-                },
-                "mounts": [
-                    {
-                        "type": "tmpfs",
-                        "path": "/home/user/project"
-                    }
-                ]
+                "env": { "HOME": "/home/user", "TERM": "xterm-256color" },
+                "mounts": [{ "type": "tmpfs", "path": "/home/user/project" }]
             });
 
-            terminal.open(document.getElementById('terminal-container'));
+            const terminalContainer = document.getElementById('terminal-container');
+            terminal.open(terminalContainer);
+            fitAddon.fit(); // Fit the terminal to the container size
+
             webvm.on('data', (data) => terminal.write(data));
             terminal.onData((data) => webvm.write(data));
 
@@ -54,7 +53,6 @@
             document.getElementById('file-input').addEventListener('change', async (event) => {
                 const files = event.target.files;
                 if (files.length === 0) return;
-
                 terminal.write("Uploading files...\r\n");
                 for (const file of files) {
                     const content = await file.arrayBuffer();
@@ -65,7 +63,7 @@
                 terminal.write("Upload complete. You can now run 'python3 evolve.py'.\r\n");
             });
 
-            webvm.start();
+            await webvm.start();
         }
         init();
     </script>
