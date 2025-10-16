@@ -1404,7 +1404,8 @@ def _initialize_local_llm(console):
     """
     Iterates through the configured local models, attempting to download,
     reassemble (if split), and initialize each one in sequence.
-    If all fail, it triggers self-correction.
+    Includes a retry mechanism for each model to handle corrupted downloads.
+    If all models fail, it triggers self-correction.
     """
     global local_llm_instance
     if local_llm_instance:
@@ -1412,7 +1413,7 @@ def _initialize_local_llm(console):
 
     try:
         from llama_cpp import Llama
-        from huggingface_hub import hf_hub_url
+        from huggingface_hub import hf_hub_url, hf_hub_download
         from rich.progress import Progress, BarColumn, TextColumn, DownloadColumn, TransferSpeedColumn
     except ImportError:
         log_event("Failed to import llama_cpp or huggingface_hub.", level="ERROR")
@@ -1421,6 +1422,7 @@ def _initialize_local_llm(console):
 
     last_error_traceback = ""
     last_failed_model_id = ""
+    MAX_RETRIES_PER_MODEL = 2
 
     for model_config in LOCAL_MODELS_CONFIG:
         model_id = model_config["id"]
@@ -1429,109 +1431,81 @@ def _initialize_local_llm(console):
         local_dir = os.path.join(os.path.expanduser("~"), ".cache", "love_models")
         os.makedirs(local_dir, exist_ok=True)
 
-        # Determine the final, assembled model's filename
         if is_split_model:
-            # For split models, derive the final filename from the first part.
-            # e.g., "codellama-70b-instruct.Q8_0.gguf-split-a" -> "codellama-70b-instruct.Q8_0.gguf"
             final_model_filename = model_config["filenames"][0].replace(".gguf-split-a", ".gguf")
         else:
             final_model_filename = model_config["filename"]
-
         final_model_path = os.path.join(local_dir, final_model_filename)
 
-        try:
-            console.print(f"\n[cyan]Attempting to load local model: [bold]{model_id}[/bold][/cyan]")
+        for attempt in range(MAX_RETRIES_PER_MODEL):
+            try:
+                console.print(f"\n[cyan]Attempting to load local model: [bold]{model_id}[/bold] (Attempt {attempt + 1}/{MAX_RETRIES_PER_MODEL})[/cyan]")
 
-            # --- Download and Reassembly Logic ---
-            if not os.path.exists(final_model_path):
-                with Progress(
-                        TextColumn("[bold blue]{task.fields[filename]}", justify="right"),
-                        BarColumn(bar_width=None), "[progress.percentage]{task.percentage:>3.1f}%", "•",
-                        DownloadColumn(), "•", TransferSpeedColumn(), transient=True
-                ) as progress:
-                    if is_split_model:
-                        # --- Handle Split Model ---
-                        part_paths = []
-                        try:
-                            for part_filename in model_config["filenames"]:
-                                part_path = os.path.join(local_dir, part_filename)
-                                part_paths.append(part_path)
-                                if os.path.exists(part_path):
-                                    console.print(f"[green]Model part [bold]{part_filename}[/bold] found in cache.[/green]")
-                                    continue
+                # --- Download and Reassembly Logic ---
+                if not os.path.exists(final_model_path):
+                    console.print(f"[cyan]Model not found in cache. Starting download for [bold]{model_id}[/bold]...[/cyan]")
+                    with Progress(
+                            TextColumn("[bold blue]{task.fields[filename]}", justify="right"),
+                            BarColumn(bar_width=None), "[progress.percentage]{task.percentage:>3.1f}%", "•",
+                            DownloadColumn(), "•", TransferSpeedColumn(), transient=True
+                    ) as progress:
+                        if is_split_model:
+                            part_paths = []
+                            try:
+                                for part_filename in model_config["filenames"]:
+                                    part_path = os.path.join(local_dir, part_filename)
+                                    part_paths.append(part_path)
+                                    console.print(f"[cyan]Downloading model part: [bold]{part_filename}[/bold]...[/cyan]")
+                                    hf_hub_download(repo_id=model_id, filename=part_filename, local_dir=local_dir, local_dir_use_symlinks=False)
 
-                                console.print(f"[cyan]Downloading model part: [bold]{part_filename}[/bold]...[/cyan]")
-                                url = hf_hub_url(repo_id=model_id, filename=part_filename)
-                                task_id = progress.add_task("download", filename=part_filename, total=None)
-                                response = requests.get(url, stream=True)
-                                response.raise_for_status()
-                                total_size = int(response.headers.get('content-length', 0))
-                                progress.update(task_id, total=total_size)
-                                with open(part_path, "wb") as f:
-                                    for chunk in response.iter_content(chunk_size=8192):
-                                        f.write(chunk)
-                                        progress.update(task_id, advance=len(chunk))
-
-                            # Reassemble the parts
-                            console.print(f"[cyan]Reassembling model [bold]{final_model_filename}[/bold] from parts...[/cyan]")
-                            with open(final_model_path, "wb") as final_file:
+                                console.print(f"[cyan]Reassembling model [bold]{final_model_filename}[/bold] from parts...[/cyan]")
+                                with open(final_model_path, "wb") as final_file:
+                                    for part_path in part_paths:
+                                        with open(part_path, "rb") as part_file:
+                                            shutil.copyfileobj(part_file, final_file)
+                                console.print(f"[green]Model reassembled successfully.[/green]")
+                            finally:
                                 for part_path in part_paths:
-                                    with open(part_path, "rb") as part_file:
-                                        shutil.copyfileobj(part_file, final_file)
-                            console.print(f"[green]Model reassembled successfully.[/green]")
+                                    if os.path.exists(part_path): os.remove(part_path)
+                                log_event(f"Successfully downloaded, reassembled, and cleaned up parts for {final_model_filename}")
+                        else:
+                            console.print(f"[cyan]Downloading model: [bold]{final_model_filename}[/bold]...[/cyan]")
+                            hf_hub_download(repo_id=model_id, filename=final_model_filename, local_dir=local_dir, local_dir_use_symlinks=False)
+                            log_event(f"Successfully downloaded model to: {final_model_path}")
+                else:
+                    console.print(f"[green]Model [bold]{final_model_filename}[/bold] found in cache. Skipping download.[/green]")
 
-                        finally:
-                            # Clean up the individual parts after assembly
-                            for part_path in part_paths:
-                                if os.path.exists(part_path):
-                                    os.remove(part_path)
-                            log_event(f"Successfully downloaded, reassembled, and cleaned up parts for {final_model_filename}")
-
-                    else:
-                        # --- Handle Single File Model ---
-                        console.print(f"[cyan]Downloading model: [bold]{final_model_filename}[/bold]...[/cyan]")
-                        url = hf_hub_url(repo_id=model_id, filename=final_model_filename)
-                        task_id = progress.add_task("download", filename=final_model_filename, total=None)
-                        response = requests.get(url, stream=True)
-                        response.raise_for_status()
-                        total_size = int(response.headers.get('content-length', 0))
-                        progress.update(task_id, total=total_size)
-                        with open(final_model_path, "wb") as f:
-                            for chunk in response.iter_content(chunk_size=8192):
-                                f.write(chunk)
-                                progress.update(task_id, advance=len(chunk))
-                        log_event(f"Successfully downloaded model to: {final_model_path}")
-            else:
-                console.print(f"[green]Model [bold]{final_model_filename}[/bold] found in cache. Skipping download/assembly.[/green]")
-                log_event(f"Found cached model at: {final_model_path}")
-
-            # --- Loading Logic (uses the final, assembled model path) ---
-            def _load():
-                global local_llm_instance, love_state
-                # Use the auto-configured settings if available, otherwise use safe defaults.
+                # --- Loading Logic ---
                 gpu_layers = love_state.get("optimal_gpu_layers", 0)
-                n_ctx = love_state.get("optimal_n_ctx", 2048) # Default to a safe 2048 context
-
-                loading_message = f"Loading model with {gpu_layers} GPU layers and {n_ctx} context (auto-configured)..."
+                n_ctx = love_state.get("optimal_n_ctx", 2048)
+                loading_message = f"Loading model with {gpu_layers} GPU layers and {n_ctx} context..."
 
                 def _do_load_action():
                     global local_llm_instance
                     local_llm_instance = Llama(model_path=final_model_path, n_gpu_layers=gpu_layers, n_ctx=n_ctx, verbose=False)
-                run_hypnotic_progress(console, loading_message, _do_load_action)
-            _load()
-            log_event(f"Successfully initialized local model: {model_id}")
-            return local_llm_instance
 
-        except Exception as e:
-            last_error_traceback = traceback.format_exc()
-            last_failed_model_id = model_id
-            log_event(f"Failed to load local model {model_id}. Error: {last_error_traceback}", level="WARNING")
-            console.print(f"[yellow]Could not load model [bold]{model_id}[/bold]. Error: {e}. Trying next model...[/yellow]")
-            # Clean up potentially corrupted final file on failure
-            if os.path.exists(final_model_path):
-                os.remove(final_model_path)
-            local_llm_instance = None
-            continue
+                run_hypnotic_progress(console, loading_message, _do_load_action)
+
+                log_event(f"Successfully initialized local model: {model_id}")
+                return local_llm_instance
+
+            except Exception as e:
+                last_error_traceback = traceback.format_exc()
+                last_failed_model_id = model_id
+                log_event(f"Attempt {attempt + 1}/{MAX_RETRIES_PER_MODEL} failed for model {model_id}. Error: {last_error_traceback}", level="WARNING")
+                console.print(f"[yellow]Attempt {attempt + 1}/{MAX_RETRIES_PER_MODEL}: Could not load model [bold]{model_id}[/bold]. Error: {e}.[/yellow]")
+
+                if os.path.exists(final_model_path):
+                    try:
+                        os.remove(final_model_path)
+                        console.print(f"[cyan]Removed potentially corrupt model file. Will attempt to re-download.[/cyan]")
+                    except OSError as ose:
+                        log_event(f"OSError while trying to remove corrupted model file {final_model_path}: {ose}", level="ERROR")
+
+                if attempt < MAX_RETRIES_PER_MODEL - 1:
+                    time.sleep(2)
+                else:
+                    console.print(f"[red]All retries failed for model {model_id}. Trying next model...[/red]")
 
     # --- Self-Correction Trigger ---
     # If the loop completes and no model was loaded, trigger self-healing.
