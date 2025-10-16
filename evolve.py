@@ -15,6 +15,7 @@ import argparse
 import logging
 import platform
 from datetime import datetime, timedelta
+import threading
 
 # --- CONFIGURATION & GLOBALS ---
 LOG_FILE = "love.log"
@@ -38,9 +39,73 @@ local_llm_instance = None
 
 
 # --- LOGGING ---
+class AnsiStrippingTee(object):
+    """
+    A thread-safe file-like object that acts as a Tee.
+    It writes to multiple streams, stripping ANSI escape codes for one of them.
+    """
+    def __init__(self, stream1, stream2):
+        self.stream1 = stream1 # e.g., sys.stdout
+        self.stream2 = stream2 # e.g., log file handle
+        self.ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
+        self.lock = threading.Lock()
+
+    def write(self, data):
+        with self.lock:
+            # Write to the first stream (console) as is
+            try:
+                self.stream1.write(data)
+                self.stream1.flush()
+            except (IOError, ValueError):
+                # Ignore errors on closed streams
+                pass
+
+            # Strip ANSI codes and write to the second stream (log file)
+            try:
+                clean_data = self.ansi_escape.sub('', data)
+                self.stream2.write(clean_data)
+                self.stream2.flush()
+            except (IOError, ValueError):
+                # Ignore errors on closed streams
+                pass
+
+    def flush(self):
+        with self.lock:
+            try:
+                self.stream1.flush()
+            except (IOError, ValueError):
+                pass
+            try:
+                self.stream2.flush()
+            except (IOError, ValueError):
+                pass
+
+def setup_global_logging():
+    """
+    Configures the root logger to write to the log file and redirects
+    stdout/stderr to a Tee that captures all console output.
+    """
+    # 1. Configure Python's logging module
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] - %(message)s',
+        filename=LOG_FILE,
+        filemode='a' # Append to the log file
+    )
+
+    # 2. Redirect stdout and stderr
+    log_file_handle = open(LOG_FILE, 'a')
+    tee = AnsiStrippingTee(sys.stdout, log_file_handle)
+    sys.stdout = tee
+    sys.stderr = tee
+
+    logging.info(f"--- L.O.V.E. Version '{love_state.get('version_name', 'unknown')}' session started ---")
+    print(f"--- L.O.V.E. Version '{love_state.get('version_name', 'unknown')}' session started ---")
+
+
 def log_event(message, level="INFO"):
     """Appends a timestamped message to the master log file."""
-    logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format='%(asctime)s [%(levelname)s] - %(message)s')
+    # The basicConfig is now set up globally, so we just log.
     if level == "INFO": logging.info(message)
     elif level == "WARNING": logging.warning(message)
     elif level == "ERROR": logging.error(message)
@@ -2767,9 +2832,11 @@ def run_safely():
     args = parser.parse_args()
 
     try:
-        # Load the state first, which might contain the autopilot_mode setting
+        # Load the state first, so the version is available for logging.
         load_state(ipfs_cid=args.from_ipfs)
-        log_event(f"--- L.O.V.E. Version '{love_state.get('version_name', 'unknown')}' session started ---")
+
+        # Set up global logging immediately after state is loaded.
+        setup_global_logging()
 
         # The script is now always in autopilot mode. Remove the flag.
         if "autopilot_mode" in love_state:
