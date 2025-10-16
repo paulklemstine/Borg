@@ -174,7 +174,27 @@ def _check_and_install_dependencies():
 
     _install_llama_cpp()
 
-    # --- Step 4: Node.js Project Dependencies ---
+    # --- Step 4: GGUF Tools Installation ---
+    # This must be done after cloning/ensuring llama.cpp exists.
+    # We check for a file that the installation creates to avoid re-running it.
+    gguf_script_path = os.path.join(sys.prefix, 'bin', 'gguf-dump')
+    if not os.path.exists(gguf_script_path):
+        print("Installing GGUF metadata tools...")
+        # Assuming llama.cpp is cloned in the root of the repository
+        gguf_py_path = os.path.join(os.path.dirname(SELF_PATH), "llama.cpp", "gguf-py")
+        if os.path.isdir(gguf_py_path):
+            try:
+                subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-e', gguf_py_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print("GGUF tools installed successfully.")
+            except subprocess.CalledProcessError as e:
+                print(f"ERROR: Failed to install 'gguf' package. Reason: {e}")
+                log_event(f"Failed to install gguf package: {e}", level="ERROR")
+        else:
+            print("ERROR: llama.cpp/gguf-py directory not found. Cannot install GGUF tools.")
+            log_event("llama.cpp/gguf-py directory not found.", level="ERROR")
+
+
+    # --- Step 5: Node.js Project Dependencies ---
     if os.path.exists('package.json'):
         print("Installing local Node.js dependencies via npm...")
         subprocess.check_call("npm install", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -233,7 +253,7 @@ from rich.rule import Rule
 from rich.live import Live
 from rich.layout import Layout
 
-from core.llm_api import run_llm
+from core.llm_api import run_llm, LOCAL_MODELS_CONFIG
 from display import create_tamagotchi_panel, create_llm_panel, create_command_panel, create_file_op_panel, create_network_panel
 from bbs import BBS_ART, scrolling_text, flash_text, run_hypnotic_progress, clear_screen, glitchy_text
 from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price
