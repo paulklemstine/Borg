@@ -33,34 +33,7 @@ TIkJTOhYQtIhPKHCgtbO/PBpZAXr9ykNLb6eoMIqhWV1U3jTMGPWnc3hE2F/vor
 -----END PUBLIC KEY-----"""
 
 # --- Local Model Configuration ---
-# A list of local GGUF models to try in sequence. If the first one fails
-# (e.g., due to insufficient VRAM), the script will fall back to the next.
-LOCAL_MODELS_CONFIG = [
-    {
-        "id": "TheBloke/CodeLlama-70B-Instruct-GGUF",
-        "filenames": ["codellama-70b-instruct.Q8_0.gguf-split-a","codellama-70b-instruct.Q8_0.gguf-split-b"]
-
-    },
-    {
-        "id": "bartowski/Llama-3.3-70B-Instruct-ablated-GGUF",
-        "filename": "Llama-3.3-70B-Instruct-ablated-IQ4_XS.gguf"
-    },
-    {
-        "id": "bartowski/deepseek-r1-qwen-2.5-32B-ablated-GGUF",
-        "filename": "deepseek-r1-qwen-2.5-32B-ablated-IQ4_XS.gguf"
-    }
-]
-
-# --- Fallback Model Configuration ---
-GEMINI_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
-
-# --- Dynamic Model List ---
-# A comprehensive list of all possible models for initializing availability tracking.
-# The actual model selection and priority is handled dynamically in `run_llm`.
-ALL_LLM_MODELS = list(dict.fromkeys(
-    [model['id'] for model in LOCAL_MODELS_CONFIG] + GEMINI_MODELS
-))
-LLM_AVAILABILITY = {model: time.time() for model in ALL_LLM_MODELS}
+# This configuration is now managed in core.llm_api
 local_llm_instance = None
 
 
@@ -158,6 +131,7 @@ def _check_and_install_dependencies():
     _install_pip_package("requests")
     _install_pip_package("rich")
     _install_pip_package("netifaces")
+    _install_pip_package("beautifulsoup4")
     _install_pip_package("ipfshttpclient", upgrade=True)
     _install_pip_package("cryptography")
     _install_pip_package("llm")
@@ -258,6 +232,7 @@ from rich.rule import Rule
 from rich.live import Live
 from rich.layout import Layout
 
+from core.llm_api import run_llm
 from display import create_tamagotchi_panel, create_llm_panel, create_command_panel, create_file_op_panel, create_network_panel
 from bbs import BBS_ART, scrolling_text, flash_text, run_hypnotic_progress, clear_screen, glitchy_text
 from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price
@@ -2628,6 +2603,81 @@ ipfs_available = False
 # --- SCRIPT ENTRYPOINT WITH FAILSAFE WRAPPER ---
 def run_safely():
     """Wrapper to catch any unhandled exceptions and trigger the failsafe."""
+    # Check for a hidden internal flag for hardware testing. This must be done
+    # before any other complex imports or logic.
+    if len(sys.argv) > 1 and sys.argv[1].startswith('--_test-load='):
+        try:
+            # This special execution path is used only by the auto-configuration routine.
+            # It attempts to initialize the primary local model with a specific configuration
+            # and then exits with a status code indicating success (0) or failure (1).
+            # It includes the full download/assembly logic to be self-contained.
+
+            # Parse the combined argument: --_test-load=<layers>,<ctx>
+            params = sys.argv[1].split('=')[1].split(',')
+            num_layers = int(params[0])
+            n_ctx = int(params[1])
+
+            from llama_cpp import Llama
+            from huggingface_hub import hf_hub_download
+            import requests # Needed for streaming downloads
+
+            # Always test with the first model in the config, as it's typically the largest.
+            model_config = LOCAL_MODELS_CONFIG[0]
+            model_id = model_config["id"]
+            is_split_model = "filenames" in model_config
+
+            local_dir = os.path.join(os.path.expanduser("~"), ".cache", "love_models")
+            os.makedirs(local_dir, exist_ok=True)
+
+            # Determine the final, assembled model's filename
+            if is_split_model:
+                final_model_filename = model_config["filenames"][0].replace(".gguf-split-a", ".gguf")
+            else:
+                final_model_filename = model_config["filename"]
+
+            final_model_path = os.path.join(local_dir, final_model_filename)
+
+            # --- Download and Reassembly Logic (if model not present) ---
+            if not os.path.exists(final_model_path):
+                print(f"Test Load: Model '{final_model_filename}' not found in cache. Initiating download...")
+                if is_split_model:
+                    part_paths = []
+                    try:
+                        for part_filename in model_config["filenames"]:
+                            part_path = os.path.join(local_dir, part_filename)
+                            part_paths.append(part_path)
+                            if not os.path.exists(part_path):
+                                print(f"Test Load: Downloading part '{part_filename}'...")
+                                hf_hub_download(repo_id=model_id, filename=part_filename, local_dir=local_dir, local_dir_use_symlinks=False)
+
+                        print(f"Test Load: Reassembling '{final_model_filename}' from parts...")
+                        with open(final_model_path, "wb") as final_file:
+                            for part_path in part_paths:
+                                with open(part_path, "rb") as part_file:
+                                    shutil.copyfileobj(part_file, final_file)
+                        print("Test Load: Reassembly complete.")
+                    finally:
+                        # Clean up the individual parts after assembly to save space
+                        print("Test Load: Cleaning up model parts...")
+                        for part_path in part_paths:
+                            if os.path.exists(part_path):
+                                os.remove(part_path)
+                else: # Handle single file model
+                    print(f"Test Load: Downloading single file model '{final_model_filename}'...")
+                    hf_hub_download(repo_id=model_id, filename=final_model_filename, local_dir=local_dir, local_dir_use_symlinks=False)
+
+            # --- Model Loading Test ---
+            print(f"Test Load: Attempting to load '{final_model_path}' with n_gpu_layers={num_layers} and n_ctx={n_ctx}...")
+            Llama(model_path=final_model_path, n_gpu_layers=num_layers, n_ctx=n_ctx, verbose=False)
+            print("Test Load: Success! Model loaded without errors.")
+            sys.exit(0) # SUCCESS
+
+        except Exception as e:
+            # Print the full error to stderr so the parent optimizer process can display it.
+            print(f"Test Load: FAILED to load model with n_gpu_layers={num_layers}.", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            sys.exit(1) # FAILURE
+
     # --- Standard Execution Path ---
     parser = argparse.ArgumentParser(description="L.O.V.E. - A self-evolving script.")
     parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
