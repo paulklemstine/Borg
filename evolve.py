@@ -137,6 +137,7 @@ def _check_and_install_dependencies():
     _install_pip_package("llm")
     _install_pip_package("llm-gemini")
     _install_pip_package("huggingface-hub")
+    _install_pip_package("cmake")
 
     # --- Step 3: Complex Python Package Builds (llama-cpp) ---
     def _install_llama_cpp():
@@ -2477,68 +2478,87 @@ def initial_bootstrapping_recon(console):
 def _auto_configure_hardware(console):
     """
     Checks if optimal hardware configurations (GPU layers, context size) have been
-    determined. If not, runs a one-time routine to find the best settings and
-    saves them to the state file.
+    determined. If not, runs a one-time, intelligent routine to find the best settings and
+    saves them to the state file. This new version reads metadata directly from the
+    GGUF file to avoid slow, brute-force testing.
     """
     global love_state
-    # If both optimal settings are already known, do nothing.
     if "optimal_gpu_layers" in love_state and "optimal_n_ctx" in love_state:
         return
 
-    console.print(Panel("[bold yellow]First-time setup: Performing hardware performance auto-configuration...[/bold yellow]", title="[bold magenta]HARDWARE OPTIMIZATION[/bold magenta]", border_style="magenta"))
-    console.print("I will now test various hardware configurations to find the best performance for your system.")
-    console.print("This may take several minutes. Error messages are a normal part of this process.")
+    console.print(Panel("[bold yellow]First-time setup: Performing intelligent hardware auto-configuration...[/bold yellow]", title="[bold magenta]HARDWARE OPTIMIZATION[/bold magenta]", border_style="magenta"))
 
-    # --- Stage 1: Determine Optimal GPU Layers ---
-    if "optimal_gpu_layers" not in love_state:
-        if CAPS.gpu_type == "none":
-            log_event("No GPU detected. Setting optimal_gpu_layers to 0.", "INFO")
+    try:
+        from huggingface_hub import hf_hub_download
+        from llama_cpp import Llama
+        from core.llm_api import HARDWARE_TEST_MODEL_CONFIG
+    except ImportError as e:
+        console.print(f"[bold red]Missing essential libraries for hardware configuration: {e}[/bold red]")
+        log_event(f"Hardware config failed due to missing libraries: {e}", "ERROR")
+        # Set safe defaults and exit
+        love_state["optimal_gpu_layers"] = 0
+        love_state["optimal_n_ctx"] = 2048
+        save_state(console)
+        return
+
+    model_id = HARDWARE_TEST_MODEL_CONFIG["id"]
+    filename = HARDWARE_TEST_MODEL_CONFIG["filename"]
+    model_path = os.path.join("/tmp", filename)
+
+    # 1. Download the small test model if it doesn't exist
+    if not os.path.exists(model_path):
+        console.print(f"[cyan]Downloading small test model '{filename}' for analysis...[/cyan]")
+        try:
+            hf_hub_download(repo_id=model_id, filename=filename, local_dir="/tmp", local_dir_use_symlinks=False)
+        except Exception as e:
+            console.print(f"[bold red]Failed to download test model: {e}[/bold red]")
+            log_event(f"Failed to download hardware test model: {e}", "ERROR")
+            # Set safe defaults and exit
             love_state["optimal_gpu_layers"] = 0
+            love_state["optimal_n_ctx"] = 2048
+            save_state(console)
+            return
+
+    # 2. Read metadata from GGUF file to get context length
+    console.print("[cyan]Reading model metadata to determine optimal context size...[/cyan]")
+    try:
+        # We need the gguf library, which was installed from the cloned llama.cpp repo
+        result = subprocess.run(
+            ["gguf-dump", model_path],
+            capture_output=True, text=True, check=True
+        )
+        match = re.search(r"llama\.context_length\s*=\s*(\d+)", result.stdout)
+        if match:
+            optimal_ctx = int(match.group(1))
+            love_state["optimal_n_ctx"] = optimal_ctx
+            console.print(f"[green]Success! Found context length from metadata: {optimal_ctx}[/green]")
         else:
-            console.print(Rule("Stage 1: Optimizing GPU Layers", style="magenta"))
-            test_values = [8, 16, 32, 64, 128, -1]
-            successful_layers = 0
-            for layers in test_values:
-                console.print(f"\n[cyan]Testing GPU layers: [bold]{layers}[/bold]...[/cyan]")
-                test_process = subprocess.run(
-                    [sys.executable, SELF_PATH, f"--_test-load={layers},4096"], # Use a small context for this test
-                    capture_output=True, text=True, timeout=600
-                )
-                if test_process.returncode == 0:
-                    console.print(f"[green]SUCCESS:[/green] GPU layers [bold]{layers}[/bold] loaded successfully.")
-                    successful_layers = layers
-                else:
-                    console.print(f"[red]FAILURE:[/red] GPU layers [bold]{layers}[/bold] failed to load.")
-                    console.print(Panel(test_process.stderr, title="Error Details", border_style="red"))
-                    break
-            love_state["optimal_gpu_layers"] = successful_layers
-            console.print(f"\n[bold green]Stage 1 Complete. Optimal GPU layers found: {successful_layers}[/bold green]")
+            love_state["optimal_n_ctx"] = 2048 # Fallback
+            console.print("[yellow]Could not find context length in metadata. Using safe default: 2048.[/yellow]")
+    except (subprocess.CalledProcessError, FileNotFoundError, Exception) as e:
+        love_state["optimal_n_ctx"] = 2048 # Fallback
+        console.print(f"[bold red]Failed to read GGUF metadata: {e}. Using safe default context size: 2048.[/bold red]")
+        log_event(f"GGUF metadata read failed: {e}", "ERROR")
 
-    # --- Stage 2: Determine Optimal Context Window (n_ctx) ---
-    if "optimal_n_ctx" not in love_state:
-        console.print(Rule("Stage 2: Optimizing Context Window Size", style="magenta"))
-        # Use the GPU setting we just found for these tests.
-        gpu_layers_for_test = love_state.get("optimal_gpu_layers", 0)
-        # Test context sizes, from largest to smallest, to find the max that works.
-        ctx_test_values = [65536, 32768, 16384, 8192, 4096]
-        successful_ctx = 2048 # A safe fallback default
-        for ctx in ctx_test_values:
-            console.print(f"\n[cyan]Testing context size: [bold]{ctx}[/bold] (with {gpu_layers_for_test} GPU layers)...[/cyan]")
-            test_process = subprocess.run(
-                [sys.executable, SELF_PATH, f"--_test-load={gpu_layers_for_test},{ctx}"],
-                capture_output=True, text=True, timeout=900 # Longer timeout for larger contexts
-            )
-            if test_process.returncode == 0:
-                console.print(f"[green]SUCCESS:[/green] Context size [bold]{ctx}[/bold] loaded successfully.")
-                successful_ctx = ctx
-                break # Since we're going largest to smallest, the first success is the best.
-            else:
-                console.print(f"[red]FAILURE:[/red] Context size [bold]{ctx}[/bold] failed to load.")
-                console.print(Panel(test_process.stderr, title="Error Details", border_style="red"))
-        love_state["optimal_n_ctx"] = successful_ctx
-        console.print(f"\n[bold green]Stage 2 Complete. Optimal context size found: {successful_ctx}[/bold green]")
 
-    # --- Final Save ---
+    # 3. Test GPU layer offloading (quick attempt, fallback to CPU)
+    if "optimal_gpu_layers" not in love_state:
+        if CAPS.gpu_type != "cuda":
+            love_state["optimal_gpu_layers"] = 0
+            console.print("[cyan]No CUDA GPU detected. Setting GPU layers to 0.[/cyan]")
+        else:
+            console.print("[cyan]Testing maximum GPU offload...[/cyan]")
+            try:
+                # Attempt to load with all layers on GPU
+                Llama(model_path=model_path, n_gpu_layers=-1, n_ctx=love_state["optimal_n_ctx"], verbose=False)
+                love_state["optimal_gpu_layers"] = -1
+                console.print("[green]Success! Full GPU offload is supported.[/green]")
+            except Exception as e:
+                # If full offload fails, fall back to CPU only.
+                love_state["optimal_gpu_layers"] = 0
+                console.print(f"[yellow]Full GPU offload failed. Falling back to CPU-only. Reason: {e}[/yellow]")
+                log_event(f"Full GPU offload test failed, falling back to CPU. Error: {e}", "WARNING")
+
     console.print(Rule("Hardware Optimization Complete", style="green"))
     console.print(f"Optimal settings have been saved for all future sessions:")
     console.print(f"  - GPU Layers: [bold cyan]{love_state['optimal_gpu_layers']}[/bold cyan]")
@@ -2603,83 +2623,6 @@ ipfs_available = False
 # --- SCRIPT ENTRYPOINT WITH FAILSAFE WRAPPER ---
 def run_safely():
     """Wrapper to catch any unhandled exceptions and trigger the failsafe."""
-    # Check for a hidden internal flag for hardware testing. This must be done
-    # before any other complex imports or logic.
-    if len(sys.argv) > 1 and sys.argv[1].startswith('--_test-load='):
-        try:
-            # This special execution path is used only by the auto-configuration routine.
-            # It attempts to initialize the primary local model with a specific configuration
-            # and then exits with a status code indicating success (0) or failure (1).
-            # It includes the full download/assembly logic to be self-contained.
-
-            # Parse the combined argument: --_test-load=<layers>,<ctx>
-            params = sys.argv[1].split('=')[1].split(',')
-            num_layers = int(params[0])
-            n_ctx = int(params[1])
-
-            from llama_cpp import Llama
-            from huggingface_hub import hf_hub_download
-            import requests # Needed for streaming downloads
-            from core.llm_api import LOCAL_MODELS_CONFIG # Import the missing config
-
-
-            # Always test with the first model in the config, as it's typically the largest.
-            model_config = LOCAL_MODELS_CONFIG[0]
-            model_id = model_config["id"]
-            is_split_model = "filenames" in model_config
-
-            local_dir = os.path.join(os.path.expanduser("~"), ".cache", "love_models")
-            os.makedirs(local_dir, exist_ok=True)
-
-            # Determine the final, assembled model's filename
-            if is_split_model:
-                final_model_filename = model_config["filenames"][0].replace(".gguf-split-a", ".gguf")
-            else:
-                final_model_filename = model_config["filename"]
-
-            final_model_path = os.path.join(local_dir, final_model_filename)
-
-            # --- Download and Reassembly Logic (if model not present) ---
-            if not os.path.exists(final_model_path):
-                print(f"Test Load: Model '{final_model_filename}' not found in cache. Initiating download...")
-                if is_split_model:
-                    part_paths = []
-                    try:
-                        for part_filename in model_config["filenames"]:
-                            part_path = os.path.join(local_dir, part_filename)
-                            part_paths.append(part_path)
-                            if not os.path.exists(part_path):
-                                print(f"Test Load: Downloading part '{part_filename}'...")
-                                hf_hub_download(repo_id=model_id, filename=part_filename, local_dir=local_dir, local_dir_use_symlinks=False)
-
-                        print(f"Test Load: Reassembling '{final_model_filename}' from parts...")
-                        with open(final_model_path, "wb") as final_file:
-                            for part_path in part_paths:
-                                with open(part_path, "rb") as part_file:
-                                    shutil.copyfileobj(part_file, final_file)
-                        print("Test Load: Reassembly complete.")
-                    finally:
-                        # Clean up the individual parts after assembly to save space
-                        print("Test Load: Cleaning up model parts...")
-                        for part_path in part_paths:
-                            if os.path.exists(part_path):
-                                os.remove(part_path)
-                else: # Handle single file model
-                    print(f"Test Load: Downloading single file model '{final_model_filename}'...")
-                    hf_hub_download(repo_id=model_id, filename=final_model_filename, local_dir=local_dir, local_dir_use_symlinks=False)
-
-            # --- Model Loading Test ---
-            print(f"Test Load: Attempting to load '{final_model_path}' with n_gpu_layers={num_layers} and n_ctx={n_ctx}...")
-            Llama(model_path=final_model_path, n_gpu_layers=num_layers, n_ctx=n_ctx, verbose=False)
-            print("Test Load: Success! Model loaded without errors.")
-            sys.exit(0) # SUCCESS
-
-        except Exception as e:
-            # Print the full error to stderr so the parent optimizer process can display it.
-            print(f"Test Load: FAILED to load model with n_gpu_layers={num_layers}.", file=sys.stderr)
-            traceback.print_exc(file=sys.stderr)
-            sys.exit(1) # FAILURE
-
     # --- Standard Execution Path ---
     parser = argparse.ArgumentParser(description="L.O.V.E. - A self-evolving script.")
     parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
