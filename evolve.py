@@ -272,7 +272,7 @@ from display import create_tamagotchi_panel, create_llm_panel, create_command_pa
 # Initialize evolve.py's global LLM_AVAILABILITY with the one from the API module
 LLM_AVAILABILITY = api_llm_availability
 from bbs import BBS_ART, run_hypnotic_progress, clear_screen
-from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price
+from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price, crypto_scan
 from exploitation import ExploitationManager
 from ipfs_manager import IPFSManager
 from sandbox import Sandbox
@@ -2357,44 +2357,10 @@ Do not execute python3 evolve.py script.
                 if not target_ip:
                     command_output = "ERROR: No target IP specified for crypto_scan command."
                 else:
-                    # Step 1: Run the standard probe to get data
-                    console.print(f"[cyan]Initiating crypto_scan on {target_ip}. Step 1: Probing target...[/cyan]")
-                    _, probe_results = probe_target(target_ip, love_state, autopilot_mode=True)
-
-                    # Step 2: Analyze with LLM
-                    console.print(f"[cyan]Step 2: Analyzing probe results for crypto indicators...[/cyan]")
-                    analysis_prompt = f"""
-You are a cybersecurity analyst specializing in cryptocurrency threats.
-Analyze the following Nmap scan results for a host at IP address {target_ip}.
-Your goal is to identify any open ports, services, or software versions that indicate the presence of:
-- Cryptocurrency wallets (e.g., Bitcoin Core, Electrum, MetaMask)
-- Cryptocurrency mining software (e.g., XMRig, CGMiner, BFGMiner)
-- Blockchain nodes (e.g., Bitcoin, Ethereum, Monero daemons)
-- Any known vulnerabilities related to these services.
-
-Provide a concise summary of your findings. If nothing suspicious is found, state that clearly.
-
-Nmap Scan Results:
----
-{probe_results}
----
-"""
-                    analysis_result = run_llm(analysis_prompt, purpose="analyze_source")
-
-                    if analysis_result:
-                        # Step 3: Store the intelligence
-                        kb = love_state['knowledge_base']
-                        crypto_intel = kb.setdefault('crypto_intel', {})
-                        crypto_intel[target_ip] = {
-                            "timestamp": time.time(),
-                            "analysis": analysis_result.strip()
-                        }
-                        save_state(console)
-                        command_output = f"Crypto scan complete for {target_ip}. Analysis stored in knowledge base.\n\nAnalysis:\n{analysis_result.strip()}"
-                        console.print(Panel(command_output, title=f"[bold green]CRYPTO SCAN: {target_ip}[/bold green]", border_style="green"))
-                    else:
-                        command_output = f"Crypto scan for {target_ip} failed during LLM analysis phase."
-                        console.print(Panel(command_output, title=f"[bold red]CRYPTO SCAN FAILED: {target_ip}[/bold red]", border_style="red"))
+                    # This command now directly calls the refactored, comprehensive crypto_scan function
+                    analysis_result = crypto_scan(target_ip, love_state, autopilot_mode=True)
+                    command_output = analysis_result
+                    console.print(Panel(command_output, title=f"[bold green]CRYPTO SCAN: {target_ip}[/bold green]", border_style="green"))
 
             elif llm_command.lower().startswith('webrequest '):
                 url_to_fetch = llm_command[11:].strip()
@@ -2537,6 +2503,7 @@ def initial_bootstrapping_recon(console):
     """
     Checks if the knowledge base is empty on startup and, if so, runs
     initial reconnaissance to populate it with basic system intelligence.
+    This includes a crypto-scan of any discovered hosts.
     """
     kb = love_state.get("knowledge_base", {})
     network_map = kb.get("network_map", {})
@@ -2556,6 +2523,7 @@ def initial_bootstrapping_recon(console):
     console.print(Panel("[bold yellow]My knowledge base is empty. I will perform an initial reconnaissance to better serve you...[/bold yellow]", title="[bold magenta]INITIAL BOOTSTRAPPING[/bold magenta]", border_style="magenta"))
 
     recon_complete = False
+    found_ips = []
 
     # 1. Get network interfaces (ifconfig)
     try:
@@ -2596,16 +2564,29 @@ def initial_bootstrapping_recon(console):
         else:
             # This isn't an error, just might not find anyone.
             console.print(f"[yellow]  - Network scan complete. No other devices discovered.[/yellow]")
-            # We still consider this a success for the recon process.
-            recon_complete = True
+            recon_complete = True # Still counts as a completed step
     except Exception as e:
         console.print(f"[red]  - An unexpected error occurred during network scan: {e}[/red]")
         log_event(f"Initial recon 'scan' failed: {e}", "ERROR")
 
-    # 4. Filesystem analysis is now handled asynchronously by the main cognitive loop's
+    # 4. Perform crypto-intelligence scan on newly discovered hosts
+    if found_ips:
+        console.print("[cyan]4. Performing crypto-intelligence scan on discovered hosts...[/cyan]")
+        for ip in found_ips:
+            console.print(f"[cyan]  - Scanning {ip} for financial opportunities...[/cyan]")
+            try:
+                # crypto_scan is designed to be non-interactive in autopilot mode
+                # and will update the knowledge base directly.
+                crypto_scan(ip, love_state, autopilot_mode=True)
+                console.print(f"[green]  - Crypto scan for {ip} complete.[/green]")
+            except Exception as e:
+                console.print(f"[red]  - An unexpected error occurred during crypto scan of {ip}: {e}[/red]")
+                log_event(f"Initial recon 'crypto_scan' failed for {ip}: {e}", "ERROR")
+
+    # 5. Filesystem analysis is now handled asynchronously by the main cognitive loop's
     #    prioritization logic. This section is intentionally left blank to prevent
     #    blocking on startup. The loop will automatically trigger priority scans.
-    console.print("[cyan]4. Filesystem analysis will be performed in the background.[/cyan]")
+    console.print("[cyan]5. Filesystem analysis will be performed in the background.[/cyan]")
 
 
     # Save state if any of the recon steps succeeded
