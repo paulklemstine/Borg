@@ -1449,7 +1449,7 @@ def _initialize_local_llm(console):
                             for part_filename in model_config["filenames"]:
                                 part_path = os.path.join(local_dir, part_filename)
                                 part_paths.append(part_path)
-                                hf_hub_download(repo_id=model_id, filename=part_filename, local_dir=local_dir, local_dir_use_symlinks=False, quiet=True)
+                                hf_hub_download(repo_id=model_id, filename=part_filename, local_dir=local_dir, local_dir_use_symlinks=False)
 
                             console.print(f"[cyan]Reassembling model [bold]{final_model_filename}[/bold] from parts...[/cyan]")
                             with open(final_model_path, "wb") as final_file:
@@ -1462,7 +1462,7 @@ def _initialize_local_llm(console):
                                 if os.path.exists(part_path): os.remove(part_path)
                             log_event(f"Successfully downloaded, reassembled, and cleaned up parts for {final_model_filename}")
                     else:
-                        hf_hub_download(repo_id=model_id, filename=final_model_filename, local_dir=local_dir, local_dir_use_symlinks=False, quiet=True)
+                        hf_hub_download(repo_id=model_id, filename=final_model_filename, local_dir=local_dir, local_dir_use_symlinks=False)
                         log_event(f"Successfully downloaded model to: {final_model_path}")
                     console.print(f"[green]Download for [bold]{model_id}[/bold] complete.[/green]")
                 else:
