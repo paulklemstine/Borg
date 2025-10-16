@@ -3,7 +3,7 @@ from rich.rule import Rule
 import os
 
 from core.orchestrator import Orchestrator
-from core.tools import crypto_scan_tool
+from core.tools import crypto_scan_tool, web_search
 
 def main():
     """
@@ -17,11 +17,12 @@ def main():
     # The Orchestrator now encapsulates the entire cognitive architecture.
     agent_orchestrator = Orchestrator()
     agent_orchestrator.tool_registry.register_tool("crypto_scan", crypto_scan_tool)
+    agent_orchestrator.tool_registry.register_tool("web_search", web_search)
 
     # --- Phase 2 Demonstration ---
     console.print("\n")
     console.print(Rule("[bold cyan]Executing Phase 2: Action & Planning Engine[/bold cyan]"))
-    goal_phase2 = "Summarize the latest advancements in AI"
+    goal_phase2 = "Find the latest news on cryptocurrency"
     plan_state_phase2 = agent_orchestrator.execute_goal(goal_phase2)
     console.print("\n[bold green]Phase 2 Execution Complete.[/bold green]")
     console.print(f"Final plan state: {plan_state_phase2}")

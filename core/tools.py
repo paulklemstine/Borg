@@ -56,17 +56,22 @@ class SecureExecutor:
 
 # --- Example Async Tools ---
 
-async def web_search(query: str) -> str:
+async def web_search(query: str, num_results: int = 5) -> str:
     """
-    Simulates an asynchronous web search.
+    Performs a web search using DuckDuckGo and returns the results.
     """
+    from duckduckgo_search import DDGS
     print(f"Performing web search for: '{query}'")
-    await asyncio.sleep(0.1)  # Simulate non-blocking I/O
-    results = [
-        {"title": "AI Advancements in 2024", "url": "/mnt/data/article1.txt"},
-        {"title": "The Rise of Generative Models", "url": "/mnt/data/article2.txt"}
-    ]
-    return json.dumps(results)
+
+    try:
+        with DDGS() as ddgs:
+            results = [r for r in ddgs.text(query, max_results=num_results)]
+
+        print(f"Web search for '{query}' returned {len(results)} results.")
+        return json.dumps(results)
+    except Exception as e:
+        print(f"Error performing web search for '{query}': {e}")
+        return json.dumps({"error": str(e)})
 
 async def read_file(path: str) -> str:
     """
