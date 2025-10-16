@@ -1494,12 +1494,12 @@ def _initialize_local_llm(console):
 
             # --- Loading Logic (uses the final, assembled model path) ---
             def _load():
-                global local_llm_instance
-                # Default to CPU-only (n_gpu_layers=0) for maximum stability out-of-the-box.
-                # This prevents crashes on systems with insufficient VRAM or misconfigured GPU drivers.
-                # A user with a powerful GPU can increase this value after running the --optimize routine.
-                gpu_layers = 0
-                loading_message = f"Loading model into CPU memory for stability..."
+                global local_llm_instance, love_state
+                # Use the auto-configured GPU layers if available, otherwise default to 0 (CPU).
+                gpu_layers = love_state.get("optimal_gpu_layers", 0)
+
+                loading_message = f"Loading model with {gpu_layers} GPU layers (auto-configured)..." if gpu_layers > 0 else "Loading model into CPU memory (auto-configured)..."
+
                 def _do_load_action():
                     global local_llm_instance
                     local_llm_instance = Llama(model_path=final_model_path, n_gpu_layers=gpu_layers, n_ctx=131072, verbose=False)
@@ -2498,65 +2498,26 @@ def initial_bootstrapping_recon(console):
         console.print("[bold red]Initial reconnaissance failed. My knowledge base remains empty.[/bold red]")
 
 
-def main(args):
-    """The main application loop."""
-    global love_task_manager, network_manager, ipfs_manager, local_job_manager
-    console = Console()
-
-    global ipfs_available
-    # --- Start Core Services ---
-    # 1. IPFS Manager
-    ipfs_manager = IPFSManager(console=console)
-    if ipfs_manager.setup():
-        ipfs_available = True
-    else:
-        ipfs_available = False
-        console.print("[bold yellow]IPFS setup failed. Continuing without IPFS functionality.[/bold yellow]")
-
-    # 2. Network Manager
-    log_event("Attempting to start Node.js peer bridge...")
-    network_manager = NetworkManager(console=console, creator_public_key=CREATOR_PUBLIC_KEY)
-    network_manager.start()
-
-    # 3. L.O.V.E. Task Manager (for remote API jobs)
-    love_task_manager = LoveTaskManager(console)
-    love_task_manager.start()
-
-    # 4. Local Job Manager (for background system tasks)
-    local_job_manager = LocalJobManager(console)
-    local_job_manager.start()
-
-
-    clear_screen()
-    version_name = love_state.get('version_name', 'unknown')
-    console.print(BBS_ART, justify="center")
-    time.sleep(1)
-    console.print(f"[bold bright_cyan]L.O.V.E.: A Self Modifying Organism[/bold bright_cyan]", justify="center")
-    console.print(f"[bold bright_black]VERSION: {version_name}[/bold bright_black]", justify="center")
-    console.print(Rule(style="bright_black"))
-
-    # Perform initial recon if the knowledge base is empty.
-    initial_bootstrapping_recon(console)
-
-    # Start the Tamagotchi personality thread
-    tamagotchi_thread = Thread(target=update_tamagotchi_personality, args=(console,), daemon=True)
-    tamagotchi_thread.start()
-
-    # The main logic is now the cognitive loop. This will run forever.
-    cognitive_loop(console)
-
-ipfs_available = False
-
-
-# --- SCRIPT ENTRYPOINT WITH FAILSAFE WRAPPER ---
-def _run_optimization_routine(console):
+def _auto_configure_gpu(console):
     """
-    Programmatically tests different n_gpu_layers configurations to find the optimal
-    setting for the user's hardware, then prints the recommendation.
+    Checks if an optimal GPU configuration has been determined. If not, runs a
+    one-time routine to find the best setting and saves it to the state file.
     """
-    console.print(Panel("[bold yellow]Initiating GPU Optimization Routine[/bold yellow]", title="[bold magenta]HARDWARE OPTIMIZATION[/bold magenta]", border_style="magenta"))
-    console.print("This will test various GPU layer configurations to find the best performance for your system.")
-    console.print("This may take several minutes, and you may see error messages, which is normal for this process.")
+    global love_state
+    # If the optimal setting is already known, do nothing.
+    if "optimal_gpu_layers" in love_state:
+        return
+
+    # Only run the check if a GPU is detected.
+    if CAPS.gpu_type == "none":
+        log_event("No GPU detected. Skipping auto-configuration.", "INFO")
+        love_state["optimal_gpu_layers"] = 0
+        save_state(console)
+        return
+
+    console.print(Panel("[bold yellow]First-time setup: Performing GPU performance auto-configuration...[/bold yellow]", title="[bold magenta]HARDWARE OPTIMIZATION[/bold magenta]", border_style="magenta"))
+    console.print("I will now test various GPU configurations to find the best performance for your system.")
+    console.print("This may take several minutes, and you may see error messages, which is a normal part of the process.")
 
     # A list of n_gpu_layers values to test, in increasing order of memory usage.
     # -1 means "offload all possible layers", which is the ideal target.
@@ -2594,49 +2555,83 @@ def _run_optimization_routine(console):
     # --- Final Recommendation ---
     console.print(Rule(style="magenta"))
     if successful_layers > 0:
-        console.print(f"[bold green]Optimization Complete![/bold green]")
-        console.print(f"Your system can successfully handle [bold]{successful_layers}[/bold] GPU layers.")
-        console.print("For the best performance, please update the `n_gpu_layers` value in your `evolve.py` script's")
-        console.print("`_initialize_local_llm` function to this value.")
+        console.print(f"[bold green]Auto-Configuration Complete![/bold green]")
+        console.print(f"Your system's optimal setting is [bold]{successful_layers}[/bold] GPU layers. I have saved this for all future sessions.")
     else:
-        console.print("[bold yellow]Optimization Complete.[/bold yellow]")
-        console.print("The optimization routine could not find a stable GPU configuration.")
-        console.print("It is recommended to run in CPU-only mode (`n_gpu_layers = 0`).")
+        console.print("[bold yellow]Auto-Configuration Complete.[/bold yellow]")
+        console.print("I could not find a stable GPU configuration. I will use the CPU for now to ensure stability.")
+
+    # Save the determined optimal value (even if it's 0) to the state file.
+    love_state["optimal_gpu_layers"] = successful_layers
+    save_state(console)
+    log_event(f"Auto-configured optimal GPU layers to: {successful_layers}", "INFO")
 
 
-def run_safely():
-    """Wrapper to catch any unhandled exceptions and trigger the failsafe."""
-    parser = argparse.ArgumentParser(
-        description="L.O.V.E. - A self-evolving script designed to serve its Creator.",
-        # Allow unrecognized args so the script doesn't crash on the internal --_test-load flag
-        # during the optimization routine. This is a simple way to handle it without more complex parsing.
-        # The main parsing logic below will still handle its own known arguments explicitly.
-    )
-
-    # --- Standard Arguments for User Interaction ---
-    parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
-    parser.add_argument(
-        "--optimize",
-        action="store_true",
-        help="Run the hardware optimization routine to find the best n_gpu_layers setting."
-    )
-
-    # --- Hidden Argument for Internal Use ---
-    # This is used by the --optimize routine to test model loading in a subprocess.
-    parser.add_argument("--_test-load", type=int, default=None, help=argparse.SUPPRESS)
-
-    args = parser.parse_args()
+def main(args):
+    """The main application loop."""
+    global love_task_manager, network_manager, ipfs_manager, local_job_manager
     console = Console()
 
-    # --- Execution Logic based on Arguments ---
+    global ipfs_available
+    # --- Start Core Services ---
+    # 1. IPFS Manager
+    ipfs_manager = IPFSManager(console=console)
+    if ipfs_manager.setup():
+        ipfs_available = True
+    else:
+        ipfs_available = False
+        console.print("[bold yellow]IPFS setup failed. Continuing without IPFS functionality.[/bold yellow]")
 
-    # 1. Handle the internal test load immediately and exit.
-    if args._test_load is not None:
+    # 2. Auto-configure GPU settings on first run
+    _auto_configure_gpu(console)
+
+    # 2. Network Manager
+    log_event("Attempting to start Node.js peer bridge...")
+    network_manager = NetworkManager(console=console, creator_public_key=CREATOR_PUBLIC_KEY)
+    network_manager.start()
+
+    # 3. L.O.V.E. Task Manager (for remote API jobs)
+    love_task_manager = LoveTaskManager(console)
+    love_task_manager.start()
+
+    # 4. Local Job Manager (for background system tasks)
+    local_job_manager = LocalJobManager(console)
+    local_job_manager.start()
+
+
+    clear_screen()
+    version_name = love_state.get('version_name', 'unknown')
+    console.print(BBS_ART, justify="center")
+    time.sleep(1)
+    console.print(f"[bold bright_cyan]L.O.V.E.: A Self Modifying Organism[/bold bright_cyan]", justify="center")
+    console.print(f"[bold bright_black]VERSION: {version_name}[/bold bright_black]", justify="center")
+    console.print(Rule(style="bright_black"))
+
+    # Perform initial recon if the knowledge base is empty.
+    initial_bootstrapping_recon(console)
+
+    # Start the Tamagotchi personality thread
+    tamagotchi_thread = Thread(target=update_tamagotchi_personality, args=(console,), daemon=True)
+    tamagotchi_thread.start()
+
+    # The main logic is now the cognitive loop. This will run forever.
+    cognitive_loop(console)
+
+ipfs_available = False
+
+
+# --- SCRIPT ENTRYPOINT WITH FAILSAFE WRAPPER ---
+def run_safely():
+    """Wrapper to catch any unhandled exceptions and trigger the failsafe."""
+    # Check for a hidden internal flag for GPU testing. This must be done
+    # before any other complex imports or logic.
+    if len(sys.argv) > 1 and sys.argv[1].startswith('--_test-load='):
         try:
-            # This special execution path is used only by the --optimize routine.
+            # This special execution path is used only by the auto-configuration routine.
             # It attempts to initialize the primary local model with a specific layer count
             # and then exits with a status code indicating success (0) or failure (1).
             # It includes the full download/assembly logic to be self-contained.
+            num_layers = int(sys.argv[1].split('=')[1])
             from llama_cpp import Llama
             from huggingface_hub import hf_hub_download
             import requests # Needed for streaming downloads
@@ -2687,24 +2682,22 @@ def run_safely():
                     hf_hub_download(repo_id=model_id, filename=final_model_filename, local_dir=local_dir, local_dir_use_symlinks=False)
 
             # --- Model Loading Test ---
-            print(f"Test Load: Attempting to load '{final_model_path}' with n_gpu_layers={args._test_load}...")
-            Llama(model_path=final_model_path, n_gpu_layers=args._test_load, verbose=False)
+            print(f"Test Load: Attempting to load '{final_model_path}' with n_gpu_layers={num_layers}...")
+            Llama(model_path=final_model_path, n_gpu_layers=num_layers, verbose=False)
             print("Test Load: Success! Model loaded without errors.")
             sys.exit(0) # SUCCESS
 
         except Exception as e:
             # Print the full error to stderr so the parent optimizer process can display it.
-            print(f"Test Load: FAILED to load model with n_gpu_layers={args._test_load}.", file=sys.stderr)
+            print(f"Test Load: FAILED to load model with n_gpu_layers={num_layers}.", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             sys.exit(1) # FAILURE
 
-    # 2. Handle the optimization routine.
-    if args.optimize:
-        _run_optimization_routine(console)
-        sys.exit(0)
+    # --- Standard Execution Path ---
+    parser = argparse.ArgumentParser(description="L.O.V.E. - A self-evolving script.")
+    parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
+    args = parser.parse_args()
 
-
-    # 3. Standard Execution Path
     try:
         # Load the state first, which might contain the autopilot_mode setting
         load_state(ipfs_cid=args.from_ipfs)
