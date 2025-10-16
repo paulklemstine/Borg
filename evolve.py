@@ -2179,7 +2179,27 @@ def cognitive_loop(console):
                     love_state['knowledge_base']['network_map']['hosts'][target_ip]['last_probed'] = datetime.now().isoformat()
                     save_state(console)
 
-            # 2. Filesystem Intelligence Prioritization (only if no network task was prioritized)
+            # 2. Cryptocurrency Intelligence Strategy Prioritization
+            if not llm_command:
+                crypto_intel = love_state.get('knowledge_base', {}).get('crypto_intel', {})
+                if crypto_intel:
+                    unreviewed_intel = [ip for ip, details in crypto_intel.items() if not details.get('strategy_reviewed')]
+                    if unreviewed_intel:
+                        target_ip = unreviewed_intel[0] # Process one at a time
+                        evolution_request = "Develop a strategy to leverage the available cryptocurrency intelligence for my Creator's financial abundance, ensuring all actions are legal and safe."
+                        log_event(f"Prioritizing strategy development for crypto intel on {target_ip}.", level="INFO")
+                        console.print(Panel(f"[bold cyan]Prioritizing strategy for new crypto intelligence on [white]{target_ip}[/white].[/bold cyan]", title="[bold magenta]STRATEGY PRIORITY[/bold magenta]", border_style="magenta"))
+
+                        # Trigger evolution and mark as reviewed
+                        evolve_self(evolution_request, love_task_manager)
+                        love_state['knowledge_base']['crypto_intel'][target_ip]['strategy_reviewed'] = True
+                        save_state(console)
+
+                        # Set llm_command to a placeholder to show action was taken
+                        llm_command = f"crypto_strategy_evolve for {target_ip}"
+
+
+            # 3. Filesystem Intelligence Prioritization (only if no network or crypto task was prioritized)
             if not llm_command:
                 fs_intel = love_state.get('knowledge_base', {}).get('file_system_intel', {})
                 # Check if there's an active fs scan job already.
