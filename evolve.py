@@ -35,19 +35,28 @@ TIkJTOhYQtIhPKHCgtbO/PBpZAXr9ykNLb6eoMIqhWV1U3jTMGPWnc3hE2F/vor
 # --- Local Model Configuration ---
 # A list of local GGUF models to try in sequence. If the first one fails
 # (e.g., due to insufficient VRAM), the script will fall back to the next.
+# A list of local GGUF models to try in sequence. If the first one fails
+# (e.g., due to insufficient VRAM), the script will fall back to the next.
 LOCAL_MODELS_CONFIG = [
     {
         "id": "TheBloke/CodeLlama-70B-Instruct-GGUF",
-        "filenames": ["codellama-70b-instruct.Q8_0.gguf-split-a","codellama-70b-instruct.Q8_0.gguf-split-b"]
-
+        "filenames": ["codellama-70b-instruct.Q8_0.gguf-split-a","codellama-70b-instruct.Q8_0.gguf-split-b"],
+        "n_ctx": 8192,
+        # Set to 0 to prioritize stability and CPU loading.
+        # Users with powerful GPUs can increase this value (e.g., to 32 or -1) for acceleration.
+        "n_gpu_layers": 0
     },
     {
         "id": "bartowski/Llama-3.3-70B-Instruct-ablated-GGUF",
-        "filename": "Llama-3.3-70B-Instruct-ablated-IQ4_XS.gguf"
+        "filename": "Llama-3.3-70B-Instruct-ablated-IQ4_XS.gguf",
+        "n_ctx": 8192,
+        "n_gpu_layers": 0
     },
     {
         "id": "bartowski/deepseek-r1-qwen-2.5-32B-ablated-GGUF",
-        "filename": "deepseek-r1-qwen-2.5-32B-ablated-IQ4_XS.gguf"
+        "filename": "deepseek-r1-qwen-2.5-32B-ablated-IQ4_XS.gguf",
+        "n_ctx": 8192,
+        "n_gpu_layers": 0
     }
 ]
 
@@ -1490,11 +1499,19 @@ def _initialize_local_llm(console):
             # --- Loading Logic (uses the final, assembled model path) ---
             def _load():
                 global local_llm_instance
-                gpu_layers = -1 if CAPS.gpu_type != "none" else 0
-                loading_message = f"Loading model into {CAPS.gpu_type.upper()} memory..." if gpu_layers != 0 else "Loading model into CPU memory..."
+                # Use model-specific settings, falling back to defaults.
+                n_gpu_layers = model_config.get("n_gpu_layers", -1) if CAPS.gpu_type != "none" else 0
+                n_ctx = model_config.get("n_ctx", 8192) # Fallback to a safe default
+
+                loading_message = f"Loading model into {CAPS.gpu_type.upper()} memory..." if n_gpu_layers != 0 else "Loading model into CPU memory..."
                 def _do_load_action():
                     global local_llm_instance
-                    local_llm_instance = Llama(model_path=final_model_path, n_gpu_layers=gpu_layers, n_ctx=131072, verbose=False)
+                    local_llm_instance = Llama(
+                        model_path=final_model_path,
+                        n_gpu_layers=n_gpu_layers,
+                        n_ctx=n_ctx,
+                        verbose=False
+                    )
                 run_hypnotic_progress(console, loading_message, _do_load_action)
             _load()
             log_event(f"Successfully initialized local model: {model_id}")
@@ -1646,6 +1663,10 @@ def run_llm(prompt_text, purpose="general"):
 
             if isinstance(e, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
                 error_message = e.stderr.strip() if hasattr(e, 'stderr') and e.stderr else str(e)
+                # Display the actual error from the llm tool to the console for better diagnostics.
+                if error_message:
+                    console.print(Panel(error_message, title=f"[bold red]LLM Error ({model_id})[/bold red]", border_style="red"))
+
                 retry_match = re.search(r"Please retry in (\d+\.\d+)s", error_message)
                 if retry_match:
                     retry_seconds = float(retry_match.group(1)) + 1
