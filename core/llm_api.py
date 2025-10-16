@@ -15,6 +15,11 @@ from bbs import run_hypnotic_progress
 # --- CONFIGURATION & GLOBALS ---
 # A list of local GGUF models to try in sequence. If the first one fails
 # (e.g., due to insufficient VRAM), the script will fall back to the next.
+HARDWARE_TEST_MODEL_CONFIG = {
+    "id": "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+    "filename": "tinyllama-1.1b-chat-v1.0.Q2_K.gguf"
+}
+
 LOCAL_MODELS_CONFIG = [
     {
         "id": "TheBloke/CodeLlama-70B-Instruct-GGUF",
@@ -32,7 +37,7 @@ LOCAL_MODELS_CONFIG = [
 ]
 
 # --- Fallback Model Configuration ---
-GEMINI_MODELS = ["gemini-1.5-pro-latest", "gemini-1.5-flash-latest", "gemini-pro"]
+GEMINI_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
 # --- Dynamic Model List ---
 # A comprehensive list of all possible models for initializing availability tracking.
