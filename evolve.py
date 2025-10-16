@@ -137,6 +137,7 @@ def _check_and_install_dependencies():
     _install_pip_package("llm")
     _install_pip_package("llm-gemini")
     _install_pip_package("huggingface-hub")
+    _install_pip_package("cmake")
 
     # --- Step 3: Complex Python Package Builds (llama-cpp) ---
     def _install_llama_cpp():
@@ -2502,7 +2503,7 @@ def _auto_configure_hardware(console):
                 console.print(f"\n[cyan]Testing GPU layers: [bold]{layers}[/bold]...[/cyan]")
                 test_process = subprocess.run(
                     [sys.executable, SELF_PATH, f"--_test-load={layers},4096"], # Use a small context for this test
-                    capture_output=True, text=True, timeout=600
+                    timeout=1800
                 )
                 if test_process.returncode == 0:
                     console.print(f"[green]SUCCESS:[/green] GPU layers [bold]{layers}[/bold] loaded successfully.")
@@ -2526,7 +2527,7 @@ def _auto_configure_hardware(console):
             console.print(f"\n[cyan]Testing context size: [bold]{ctx}[/bold] (with {gpu_layers_for_test} GPU layers)...[/cyan]")
             test_process = subprocess.run(
                 [sys.executable, SELF_PATH, f"--_test-load={gpu_layers_for_test},{ctx}"],
-                capture_output=True, text=True, timeout=900 # Longer timeout for larger contexts
+                timeout=1800 # Longer timeout for larger contexts
             )
             if test_process.returncode == 0:
                 console.print(f"[green]SUCCESS:[/green] Context size [bold]{ctx}[/bold] loaded successfully.")
@@ -2620,11 +2621,11 @@ def run_safely():
             from llama_cpp import Llama
             from huggingface_hub import hf_hub_download
             import requests # Needed for streaming downloads
-            from core.llm_api import LOCAL_MODELS_CONFIG # Import the missing config
+            from core.llm_api import HARDWARE_TEST_MODEL_CONFIG
 
 
-            # Always test with the first model in the config, as it's typically the largest.
-            model_config = LOCAL_MODELS_CONFIG[0]
+            # Always use the dedicated hardware test model config.
+            model_config = HARDWARE_TEST_MODEL_CONFIG
             model_id = model_config["id"]
             is_split_model = "filenames" in model_config
 
