@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
 from rich.console import Console
 from rich.panel import Panel
+import time
 
 from bbs import run_hypnotic_progress
 from ipfs import pin_to_ipfs, verify_ipfs_pin
@@ -678,3 +679,88 @@ def track_ethereum_price(evil_state):
         console.print(f"[bold red]An unexpected error occurred while tracking price: {e}[/bold red]")
         logging.critical(f"Unexpected error in track_ethereum_price: {e}")
         return None, f"An unexpected error occurred: {e}"
+
+
+def crypto_scan(target_ip, evil_state, autopilot_mode=False):
+    """
+    Probes a target for crypto-related software and updates the knowledge base.
+    """
+    console = Console()
+    if not autopilot_mode:
+        console.print(f"[cyan]Initiating cryptocurrency software scan on {target_ip}...[/cyan]")
+
+    open_ports, probe_summary = probe_target(target_ip, evil_state, autopilot_mode=True)
+
+    if open_ports is None:
+        if not autopilot_mode:
+            console.print(f"[bold red]Crypto scan failed: The initial probe of {target_ip} was unsuccessful.[/bold red]")
+        return f"Crypto scan failed: Could not probe {target_ip}."
+
+    if not open_ports:
+        if not autopilot_mode:
+            console.print(f"[green]Crypto scan complete. No open ports found on {target_ip}.[/green]")
+        return "Crypto scan complete. No open ports found."
+
+    analysis_result = analyze_crypto_software(target_ip, open_ports, evil_state, autopilot_mode=True)
+
+    if not autopilot_mode:
+        console.print(Panel(analysis_result, title=f"[bold blue]Cryptocurrency Analysis for {target_ip}[/bold blue]", expand=False))
+        console.print(f"[green]Crypto scan and analysis for {target_ip} complete.[/green]")
+
+    # The detailed results are saved in the KB by the analysis function.
+    # We return the high-level summary.
+    return analysis_result
+
+
+def analyze_crypto_software(target_ip, open_ports, evil_state, autopilot_mode=False):
+    """
+    Analyzes probe results with an LLM to identify crypto software and updates the KB.
+    """
+    kb = evil_state["knowledge_base"]
+    if "llm_api" not in evil_state:
+        return "Error: LLM API not configured."
+    llm_api = evil_state["llm_api"]
+
+    # Format the data for the LLM prompt
+    port_details = []
+    for port, data in open_ports.items():
+        port_info = f"Port {port}/{data['protocol']}: Service='{data['service']}', Info='{data['service_info']}'"
+        if data.get('web_content'):
+            port_info += f", Web Content (first 200 chars)='{data['web_content'][:200]}...'"
+        port_details.append(port_info)
+
+    prompt_data = f"Target IP: {target_ip}\n" + "\n".join(port_details)
+
+    prompt = f"""
+    Analyze the following nmap scan results from the target IP {target_ip}.
+    Identify any running software that could be related to cryptocurrency.
+    This includes, but is not limited to:
+    - Cryptocurrency wallets (e.g., MetaMask, Electrum)
+    - Cryptocurrency miners (e.g., XMRig, CGMiner)
+    - Blockchain nodes (e.g., Bitcoin Core, Geth)
+    - Trading bots or platforms.
+
+    Pay close attention to non-standard ports and service banners.
+    For each identified piece of software, provide its name, the port it's running on, and a confidence score (Low, Medium, High).
+    If no cryptocurrency software is detected, state that clearly.
+
+    Scan Results:
+    {prompt_data}
+
+    Analysis:
+    """
+
+    # Call the LLM for analysis
+    analysis = llm_api.get_completion(prompt)
+
+    # Update the knowledge base with the analysis
+    if 'crypto_analysis' not in kb['hosts'][target_ip]:
+        kb['hosts'][target_ip]['crypto_analysis'] = []
+
+    kb['hosts'][target_ip]['crypto_analysis'].append({
+        "timestamp": time.time(),
+        "analysis": analysis,
+        "raw_probe_data": open_ports
+    })
+
+    return analysis
