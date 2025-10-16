@@ -1,0 +1,8 @@
+requests
+netifaces
+web3
+rich
+cryptography
+pytest
+pytest-asyncio
+wget
