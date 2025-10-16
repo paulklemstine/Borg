@@ -80,6 +80,13 @@ class AnsiStrippingTee(object):
             except (IOError, ValueError):
                 pass
 
+    def isatty(self):
+        """
+        Pretends to be a TTY if the first stream is a TTY.
+        This is crucial for libraries like 'rich' to enable color output.
+        """
+        return hasattr(self.stream1, 'isatty') and self.stream1.isatty()
+
 def setup_global_logging():
     """
     Configures the root logger to write to the log file and redirects
