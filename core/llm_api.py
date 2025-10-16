@@ -16,8 +16,8 @@ from bbs import run_hypnotic_progress
 # A list of local GGUF models to try in sequence. If the first one fails
 # (e.g., due to insufficient VRAM), the script will fall back to the next.
 HARDWARE_TEST_MODEL_CONFIG = {
-    "id": "TheBloke/gemma-2-9b-it-GGUF",
-    "filename": "gemma-2-9b-it.Q2_K.gguf"
+    "id": "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+    "filename": "tinyllama-1.1b-chat-v1.0.Q2_K.gguf"
 }
 
 LOCAL_MODELS_CONFIG = [
