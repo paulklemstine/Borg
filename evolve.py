@@ -194,6 +194,7 @@ def _check_and_install_dependencies():
     gguf_script_path = os.path.join(sys.prefix, 'bin', 'gguf-dump')
     if not os.path.exists(gguf_script_path):
         print("Installing GGUF metadata tools...")
+        gguf_py_path = os.path.join(llama_cpp_dir, "gguf-py")
         if os.path.isdir(gguf_py_path):
             try:
                 subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-e', gguf_py_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
