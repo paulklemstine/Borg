@@ -163,6 +163,11 @@ def _check_and_install_dependencies():
     _install_pip_package("llm")
     _install_pip_package("llm-gemini")
     _install_pip_package("huggingface-hub")
+    # Ethereum and smart contract analysis tools
+    _install_pip_package("web3")
+    _install_pip_package("hexbytes")
+    # slither-analyzer is installed via pip but its import name is 'slither'
+    _install_pip_package("slither-analyzer", "slither")
 
     # --- Step 3: Complex Python Package Builds (llama-cpp) ---
     def _install_llama_cpp():
@@ -266,6 +271,7 @@ from ipfs_manager import IPFSManager
 from sandbox import Sandbox
 from filesystem import analyze_filesystem
 from core.storage import save_all_state
+from core.ethereum.engine import EthereumAnalysisEngine
 from threading import Thread, Lock, RLock
 import uuid
 
@@ -2485,7 +2491,7 @@ def initial_bootstrapping_recon(console):
         console.print("[bold red]Initial reconnaissance failed. Knowledge base remains empty.[/bold red]")
 
 
-def main(args):
+def main(args, eth_engine: EthereumAnalysisEngine):
     """The main application loop."""
     global jules_task_manager, network_manager, ipfs_manager, local_job_manager
     console = Console()
@@ -2513,6 +2519,10 @@ def main(args):
     local_job_manager = LocalJobManager(console)
     local_job_manager.start()
 
+    # 5. Ethereum Analysis Engine
+    if eth_engine:
+        eth_engine.start()
+
 
     clear_screen()
     version_name = jules_state.get('version_name', 'unknown')
@@ -2538,51 +2548,51 @@ ipfs_available = False
 # --- SCRIPT ENTRYPOINT WITH FAILSAFE WRAPPER ---
 def run_safely():
     """Wrapper to catch any unhandled exceptions and trigger the failsafe."""
-    # Check for --help flag before doing anything else.
-    if '--help' in sys.argv or '-h' in sys.argv:
-        parser = argparse.ArgumentParser(description="J.U.L.E.S. - A self-evolving script.")
-        parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
-        parser.print_help()
-        sys.exit(0)
-
-    parser = argparse.ArgumentParser(description="J.U.L.E.S. - A self-evolving script.")
-    parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
-    args = parser.parse_args()
+    eth_engine = None
+    console = Console()
 
     try:
-        # Load the state first, which might contain the autopilot_mode setting
+        # Check for --help flag before doing anything else
+        if '--help' in sys.argv or '-h' in sys.argv:
+            parser = argparse.ArgumentParser(description="J.U.L.E.S. - A self-evolving script.")
+            parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
+            parser.print_help()
+            sys.exit(0)
+
+        parser = argparse.ArgumentParser(description="J.U.L.E.S. - A self-evolving script.")
+        parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
+        args = parser.parse_args()
+
+        # Load state and initialize services
         load_state(ipfs_cid=args.from_ipfs)
         log_event(f"--- J.U.L.E.S. Version '{jules_state.get('version_name', 'unknown')}' session started ---")
 
-        # The script is now always in autopilot mode. Remove the flag.
-        if "autopilot_mode" in jules_state:
-            del jules_state["autopilot_mode"]
-            log_event("State migration: Removed obsolete 'autopilot_mode' flag.", level="INFO")
-            save_state()
+        # Instantiate the Ethereum Engine
+        eth_engine = EthereumAnalysisEngine(console)
 
-        main(args)
+        main(args, eth_engine)
 
     except (KeyboardInterrupt, EOFError):
-        console = Console()
         console.print("\n[bold red]Operator disconnected. Shutting down services...[/bold red]")
-        if 'ipfs_manager' in globals() and ipfs_manager: ipfs_manager.stop_daemon()
-        if 'network_manager' in globals() and network_manager: network_manager.stop()
-        if 'jules_task_manager' in globals() and jules_task_manager: jules_task_manager.stop()
-        if 'local_job_manager' in globals() and local_job_manager: local_job_manager.stop()
         log_event("Session terminated by user (KeyboardInterrupt/EOF).")
-        sys.exit(0)
     except Exception as e:
-        if 'ipfs_manager' in globals() and ipfs_manager: ipfs_manager.stop_daemon()
-        if 'network_manager' in globals() and network_manager: network_manager.stop()
-        if 'jules_task_manager' in globals() and jules_task_manager: jules_task_manager.stop()
-        if 'local_job_manager' in globals() and local_job_manager: local_job_manager.stop()
         full_traceback = traceback.format_exc()
         log_event(f"UNHANDLED CRITICAL EXCEPTION! Triggering failsafe.\n{full_traceback}", level="CRITICAL")
-        console = Console()
         console.print_exception(show_locals=True)
         console.print(f"[bold red]CRITICAL RUNTIME ERROR: {e}\nATTEMPTING TO REVERT TO LAST KNOWN GOOD STATE...[/bold red]")
-
         emergency_revert()
+    finally:
+        # This block ensures all services are stopped cleanly, regardless of exit reason.
+        console.print("[bold yellow]Shutting down all services...[/bold yellow]")
+        if 'ipfs_manager' in globals() and globals().get('ipfs_manager'): globals()['ipfs_manager'].stop_daemon()
+        if 'network_manager' in globals() and globals().get('network_manager'): globals()['network_manager'].stop()
+        if 'jules_task_manager' in globals() and globals().get('jules_task_manager'): globals()['jules_task_manager'].stop()
+        if 'local_job_manager' in globals() and globals().get('local_job_manager'): globals()['local_job_manager'].stop()
+        if eth_engine: eth_engine.stop()
+        log_event("All services shut down.")
+        print("J.U.L.E.S. has been terminated.")
+        sys.exit(0)
+
 
 if __name__ == "__main__":
     run_safely()
