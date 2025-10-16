@@ -1,6 +1,7 @@
 import json
 import asyncio
 from typing import Dict, Any, Callable
+from network import crypto_scan
 
 class ToolRegistry:
     """
@@ -99,3 +100,11 @@ async def notify_creator(contract_address: str, attack_name: str, simulation_log
     print("="*50 + "\n")
     # Here you would add the logic to send the notification to Paul Klemstine (raver1975)
     return "Notification sent to the creator."
+
+async def crypto_scan_tool(target_ip: str, evil_state: dict) -> str:
+    """
+    Async wrapper for the crypto_scan tool.
+    """
+    print(f"Initiating crypto_scan on: '{target_ip}'")
+    await asyncio.sleep(0.1)  # Simulate non-blocking I/O
+    return crypto_scan(target_ip, evil_state)
