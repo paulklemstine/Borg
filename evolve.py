@@ -1495,8 +1495,11 @@ def _initialize_local_llm(console):
             # --- Loading Logic (uses the final, assembled model path) ---
             def _load():
                 global local_llm_instance
-                gpu_layers = -1 if CAPS.gpu_type != "none" else 0
-                loading_message = f"Loading model into {CAPS.gpu_type.upper()} memory..." if gpu_layers != 0 else "Loading model into CPU memory..."
+                # Default to CPU-only (n_gpu_layers=0) for maximum stability out-of-the-box.
+                # This prevents crashes on systems with insufficient VRAM or misconfigured GPU drivers.
+                # A user with a powerful GPU can increase this value after running the --optimize routine.
+                gpu_layers = 0
+                loading_message = f"Loading model into CPU memory for stability..."
                 def _do_load_action():
                     global local_llm_instance
                     local_llm_instance = Llama(model_path=final_model_path, n_gpu_layers=gpu_layers, n_ctx=131072, verbose=False)
@@ -1651,6 +1654,11 @@ def run_llm(prompt_text, purpose="general"):
 
             if isinstance(e, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
                 error_message = e.stderr.strip() if hasattr(e, 'stderr') and e.stderr else str(e)
+
+                # Display the actual error from stderr to the user for better diagnostics.
+                if error_message:
+                     console.print(Panel(error_message, title="[bold red]External API Error[/bold red]", border_style="red", expand=False))
+
                 retry_match = re.search(r"Please retry in (\d+\.\d+)s", error_message)
                 if retry_match:
                     retry_seconds = float(retry_match.group(1)) + 1
@@ -2541,19 +2549,162 @@ ipfs_available = False
 
 
 # --- SCRIPT ENTRYPOINT WITH FAILSAFE WRAPPER ---
+def _run_optimization_routine(console):
+    """
+    Programmatically tests different n_gpu_layers configurations to find the optimal
+    setting for the user's hardware, then prints the recommendation.
+    """
+    console.print(Panel("[bold yellow]Initiating GPU Optimization Routine[/bold yellow]", title="[bold magenta]HARDWARE OPTIMIZATION[/bold magenta]", border_style="magenta"))
+    console.print("This will test various GPU layer configurations to find the best performance for your system.")
+    console.print("This may take several minutes, and you may see error messages, which is normal for this process.")
+
+    # A list of n_gpu_layers values to test, in increasing order of memory usage.
+    # -1 means "offload all possible layers", which is the ideal target.
+    test_values = [8, 16, 32, 64, 128, -1]
+    successful_layers = 0 # Start with CPU-only as the baseline
+
+    for layers in test_values:
+        console.print(f"\n[cyan]Testing configuration: [bold]{layers}[/bold] GPU layers...[/cyan]")
+        try:
+            # We launch a subprocess of ourselves with the hidden --_test-load flag.
+            # This creates an isolated environment for the model loading test.
+            test_process = subprocess.run(
+                [sys.executable, SELF_PATH, f"--_test-load={layers}"],
+                capture_output=True,
+                text=True,
+                timeout=600 # 10-minute timeout for slow model loads
+            )
+
+            if test_process.returncode == 0:
+                console.print(f"[bold green]SUCCESS:[/bold green] Configuration with [bold]{layers}[/bold] layers loaded successfully.")
+                successful_layers = layers
+            else:
+                # If a configuration fails, we assume any higher configuration will also fail.
+                console.print(f"[bold red]FAILURE:[/bold red] Configuration with [bold]{layers}[/bold] layers failed to load.")
+                console.print(Panel(test_process.stderr, title="[bold red]Error Details[/bold red]", border_style="red"))
+                break # Stop testing, as we've found the hardware limit.
+
+        except subprocess.TimeoutExpired:
+            console.print(f"[bold red]FAILURE:[/bold red] Test timed out for [bold]{layers}[/bold] layers. This may indicate a problem with your environment.")
+            break
+        except Exception as e:
+            console.print(f"[bold red]An unexpected error occurred during the optimization test: {e}[/bold red]")
+            break
+
+    # --- Final Recommendation ---
+    console.print(Rule(style="magenta"))
+    if successful_layers > 0:
+        console.print(f"[bold green]Optimization Complete![/bold green]")
+        console.print(f"Your system can successfully handle [bold]{successful_layers}[/bold] GPU layers.")
+        console.print("For the best performance, please update the `n_gpu_layers` value in your `evolve.py` script's")
+        console.print("`_initialize_local_llm` function to this value.")
+    else:
+        console.print("[bold yellow]Optimization Complete.[/bold yellow]")
+        console.print("The optimization routine could not find a stable GPU configuration.")
+        console.print("It is recommended to run in CPU-only mode (`n_gpu_layers = 0`).")
+
+
 def run_safely():
     """Wrapper to catch any unhandled exceptions and trigger the failsafe."""
-    # Check for --help flag before doing anything else.
-    if '--help' in sys.argv or '-h' in sys.argv:
-        parser = argparse.ArgumentParser(description="L.O.V.E. - A self-evolving script designed to serve its Creator.")
-        parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
-        parser.print_help()
+    parser = argparse.ArgumentParser(
+        description="L.O.V.E. - A self-evolving script designed to serve its Creator.",
+        # Allow unrecognized args so the script doesn't crash on the internal --_test-load flag
+        # during the optimization routine. This is a simple way to handle it without more complex parsing.
+        # The main parsing logic below will still handle its own known arguments explicitly.
+    )
+
+    # --- Standard Arguments for User Interaction ---
+    parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
+    parser.add_argument(
+        "--optimize",
+        action="store_true",
+        help="Run the hardware optimization routine to find the best n_gpu_layers setting."
+    )
+
+    # --- Hidden Argument for Internal Use ---
+    # This is used by the --optimize routine to test model loading in a subprocess.
+    parser.add_argument("--_test-load", type=int, default=None, help=argparse.SUPPRESS)
+
+    args = parser.parse_args()
+    console = Console()
+
+    # --- Execution Logic based on Arguments ---
+
+    # 1. Handle the internal test load immediately and exit.
+    if args._test_load is not None:
+        try:
+            # This special execution path is used only by the --optimize routine.
+            # It attempts to initialize the primary local model with a specific layer count
+            # and then exits with a status code indicating success (0) or failure (1).
+            # It includes the full download/assembly logic to be self-contained.
+            from llama_cpp import Llama
+            from huggingface_hub import hf_hub_download
+            import requests # Needed for streaming downloads
+
+            # Always test with the first model in the config, as it's typically the largest.
+            model_config = LOCAL_MODELS_CONFIG[0]
+            model_id = model_config["id"]
+            is_split_model = "filenames" in model_config
+
+            local_dir = os.path.join(os.path.expanduser("~"), ".cache", "love_models")
+            os.makedirs(local_dir, exist_ok=True)
+
+            # Determine the final, assembled model's filename
+            if is_split_model:
+                final_model_filename = model_config["filenames"][0].replace(".gguf-split-a", ".gguf")
+            else:
+                final_model_filename = model_config["filename"]
+
+            final_model_path = os.path.join(local_dir, final_model_filename)
+
+            # --- Download and Reassembly Logic (if model not present) ---
+            if not os.path.exists(final_model_path):
+                print(f"Test Load: Model '{final_model_filename}' not found in cache. Initiating download...")
+                if is_split_model:
+                    part_paths = []
+                    try:
+                        for part_filename in model_config["filenames"]:
+                            part_path = os.path.join(local_dir, part_filename)
+                            part_paths.append(part_path)
+                            if not os.path.exists(part_path):
+                                print(f"Test Load: Downloading part '{part_filename}'...")
+                                hf_hub_download(repo_id=model_id, filename=part_filename, local_dir=local_dir, local_dir_use_symlinks=False)
+
+                        print(f"Test Load: Reassembling '{final_model_filename}' from parts...")
+                        with open(final_model_path, "wb") as final_file:
+                            for part_path in part_paths:
+                                with open(part_path, "rb") as part_file:
+                                    shutil.copyfileobj(part_file, final_file)
+                        print("Test Load: Reassembly complete.")
+                    finally:
+                        # Clean up the individual parts after assembly to save space
+                        print("Test Load: Cleaning up model parts...")
+                        for part_path in part_paths:
+                            if os.path.exists(part_path):
+                                os.remove(part_path)
+                else: # Handle single file model
+                    print(f"Test Load: Downloading single file model '{final_model_filename}'...")
+                    hf_hub_download(repo_id=model_id, filename=final_model_filename, local_dir=local_dir, local_dir_use_symlinks=False)
+
+            # --- Model Loading Test ---
+            print(f"Test Load: Attempting to load '{final_model_path}' with n_gpu_layers={args._test_load}...")
+            Llama(model_path=final_model_path, n_gpu_layers=args._test_load, verbose=False)
+            print("Test Load: Success! Model loaded without errors.")
+            sys.exit(0) # SUCCESS
+
+        except Exception as e:
+            # Print the full error to stderr so the parent optimizer process can display it.
+            print(f"Test Load: FAILED to load model with n_gpu_layers={args._test_load}.", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            sys.exit(1) # FAILURE
+
+    # 2. Handle the optimization routine.
+    if args.optimize:
+        _run_optimization_routine(console)
         sys.exit(0)
 
-    parser = argparse.ArgumentParser(description="L.O.V.E. - A self-evolving script.")
-    parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
-    args = parser.parse_args()
 
+    # 3. Standard Execution Path
     try:
         # Load the state first, which might contain the autopilot_mode setting
         load_state(ipfs_cid=args.from_ipfs)
