@@ -272,7 +272,7 @@ from display import create_tamagotchi_panel, create_llm_panel, create_command_pa
 # Initialize evolve.py's global LLM_AVAILABILITY with the one from the API module
 LLM_AVAILABILITY = api_llm_availability
 from bbs import BBS_ART, run_hypnotic_progress, clear_screen
-from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price
+from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price, analyze_host_opportunities
 from exploitation import ExploitationManager
 from ipfs_manager import IPFSManager
 from sandbox import Sandbox
@@ -2092,6 +2092,7 @@ My current system state:
 - `execute <shell command>`: Run a shell command on the host system.
 - `scan`: Scan the local network for active devices.
 - `probe <ip_address>`: Deep scan an IP for open ports, services, and vulnerabilities.
+- `analyze_host_opportunities <ip_address>`: Analyze probe results for vulnerabilities or financial opportunities using LLM.
 - `crypto_scan <ip_address>`: Probe a target and analyze results for crypto-related software.
 - `webrequest <url>`: Fetch the text content of a web page.
 - `exploit <ip_address>`: Attempt to run exploits against a target.
@@ -2351,6 +2352,11 @@ Do not execute python3 evolve.py script.
                 _ports, output_str = probe_target(target_ip, love_state, autopilot_mode=True)
                 command_output = output_str
                 console.print(create_network_panel("probe", target_ip, output_str))
+
+            elif llm_command.lower().startswith('analyze_host_opportunities '):
+                target_ip = llm_command[27:].strip()
+                command_output = analyze_host_opportunities(target_ip, love_state, autopilot_mode=True)
+                console.print(create_network_panel("analyze_host_opportunities", target_ip, command_output))
 
             elif llm_command.lower().startswith('crypto_scan '):
                 target_ip = llm_command[12:].strip()

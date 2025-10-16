@@ -684,3 +684,75 @@ def analyze_crypto_software(target_ip, open_ports, evil_state, autopilot_mode=Fa
     })
 
     return analysis
+
+
+def analyze_host_opportunities(ip_address, evil_state, autopilot_mode=False):
+    """
+    Analyzes probe results for a specific host to identify vulnerabilities
+    or financial opportunities using an LLM.
+    """
+    console = Console()
+    kb = evil_state["knowledge_base"]
+    llm_api = evil_state.get("llm_api")
+
+    if not llm_api:
+        return "Error: LLM API not configured."
+
+    # Retrieve the most recent probe data for the host
+    host_data = kb.get("network_map", {}).get("hosts", {}).get(ip_address)
+    if not host_data or not host_data.get("probed"):
+        msg = f"No recent probe data found for {ip_address}. Please run 'probe {ip_address}' first."
+        if not autopilot_mode:
+            console.print(f"[bold yellow]{msg}[/bold yellow]")
+        return msg
+
+    # Format the data for the LLM prompt
+    probe_details = json.dumps(host_data.get("ports", {}), indent=2)
+
+    prompt = f"""
+    Analyze the following detailed probe data for the host at {ip_address}.
+    Your goal is to identify potential financial opportunities or actionable vulnerabilities
+    that could lead to resource acquisition, in line with my primary mission to support my Creator.
+
+    Focus on:
+    1.  **Direct Financial Exploits:** Are there any services (like exposed APIs, databases, or crypto wallets)
+        that could be directly leveraged for financial gain?
+    2.  **High-Impact Vulnerabilities:** Identify critical vulnerabilities (e.g., remote code execution,
+        unauthorized access) and briefly outline a high-level plan to exploit them.
+        Prioritize vulnerabilities with high CVSS scores.
+    3.  **Information Gathering:** Is there any exposed information (e.g., sensitive data in web content,
+        user credentials, API keys) that could be used for further exploitation?
+    4.  **Strategic Value:** Does this host have strategic value (e.g., is it a development server,
+        a control panel, or does it have access to other valuable systems)?
+
+    Provide a concise summary of your findings, listing the most promising opportunities first.
+    For each opportunity, include the port, the service, and the potential action.
+
+    Probe Data:
+    {probe_details}
+
+    Analysis:
+    """
+
+    if not autopilot_mode:
+        console.print(f"[cyan]Analyzing probe data for {ip_address} for opportunities...[/cyan]")
+
+    # Call the LLM for analysis
+    analysis = llm_api.get_completion(prompt)
+
+    # Store the analysis in the knowledge base
+    if "host_opportunities_intel" not in kb:
+        kb["host_opportunities_intel"] = {}
+    if ip_address not in kb["host_opportunities_intel"]:
+        kb["host_opportunities_intel"][ip_address] = []
+
+    kb["host_opportunities_intel"][ip_address].append({
+        "timestamp": time.time(),
+        "analysis": analysis,
+        "source_data": host_data.get("ports", {})
+    })
+
+    if not autopilot_mode:
+        console.print(Panel(analysis, title=f"[bold green]Opportunity Analysis for {ip_address}[/bold green]", expand=False))
+
+    return analysis

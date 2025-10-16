@@ -1,7 +1,7 @@
 import json
 import asyncio
 from typing import Dict, Any, Callable
-from network import crypto_scan
+from network import crypto_scan, analyze_host_opportunities
 
 class ToolRegistry:
     """
@@ -108,3 +108,12 @@ async def crypto_scan_tool(target_ip: str, evil_state: dict) -> str:
     print(f"Initiating crypto_scan on: '{target_ip}'")
     await asyncio.sleep(0.1)  # Simulate non-blocking I/O
     return crypto_scan(target_ip, evil_state)
+
+
+async def analyze_host_opportunities_tool(ip_address: str, evil_state: dict) -> str:
+    """
+    Async wrapper for the analyze_host_opportunities tool.
+    """
+    print(f"Initiating host opportunity analysis on: '{ip_address}'")
+    await asyncio.sleep(0.1)  # Simulate non-blocking I/O
+    return analyze_host_opportunities(ip_address, evil_state)
