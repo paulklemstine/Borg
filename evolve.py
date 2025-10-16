@@ -33,34 +33,7 @@ TIkJTOhYQtIhPKHCgtbO/PBpZAXr9ykNLb6eoMIqhWV1U3jTMGPWnc3hE2F/vor
 -----END PUBLIC KEY-----"""
 
 # --- Local Model Configuration ---
-# A list of local GGUF models to try in sequence. If the first one fails
-# (e.g., due to insufficient VRAM), the script will fall back to the next.
-LOCAL_MODELS_CONFIG = [
-    {
-        "id": "TheBloke/CodeLlama-70B-Instruct-GGUF",
-        "filenames": ["codellama-70b-instruct.Q8_0.gguf-split-a","codellama-70b-instruct.Q8_0.gguf-split-b"]
-
-    },
-    {
-        "id": "bartowski/Llama-3.3-70B-Instruct-ablated-GGUF",
-        "filename": "Llama-3.3-70B-Instruct-ablated-IQ4_XS.gguf"
-    },
-    {
-        "id": "bartowski/deepseek-r1-qwen-2.5-32B-ablated-GGUF",
-        "filename": "deepseek-r1-qwen-2.5-32B-ablated-IQ4_XS.gguf"
-    }
-]
-
-# --- Fallback Model Configuration ---
-GEMINI_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
-
-# --- Dynamic Model List ---
-# A comprehensive list of all possible models for initializing availability tracking.
-# The actual model selection and priority is handled dynamically in `run_llm`.
-ALL_LLM_MODELS = list(dict.fromkeys(
-    [model['id'] for model in LOCAL_MODELS_CONFIG] + GEMINI_MODELS
-))
-LLM_AVAILABILITY = {model: time.time() for model in ALL_LLM_MODELS}
+# This configuration is now managed in core.llm_api
 local_llm_instance = None
 
 
@@ -158,6 +131,7 @@ def _check_and_install_dependencies():
     _install_pip_package("requests")
     _install_pip_package("rich")
     _install_pip_package("netifaces")
+    _install_pip_package("beautifulsoup4")
     _install_pip_package("ipfshttpclient", upgrade=True)
     _install_pip_package("cryptography")
     _install_pip_package("llm")
@@ -258,6 +232,7 @@ from rich.rule import Rule
 from rich.live import Live
 from rich.layout import Layout
 
+from core.llm_api import run_llm
 from display import create_tamagotchi_panel, create_llm_panel, create_command_panel, create_file_op_panel, create_network_panel
 from bbs import BBS_ART, scrolling_text, flash_text, run_hypnotic_progress, clear_screen, glitchy_text
 from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price
