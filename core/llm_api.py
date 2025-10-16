@@ -37,7 +37,7 @@ LOCAL_MODELS_CONFIG = [
 ]
 
 # --- Fallback Model Configuration ---
-GEMINI_MODELS = ["gemini-1.5-pro-latest", "gemini-1.5-flash-latest", "gemini-pro"]
+GEMINI_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
 # --- Dynamic Model List ---
 # A comprehensive list of all possible models for initializing availability tracking.
