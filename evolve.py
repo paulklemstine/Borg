@@ -1362,7 +1362,302 @@ def initial_knowledge_base_bootstrap(console):
 
 
 # --- CORE LLM INTERACTION ---
-from core.llm_api import run_llm
+def _initialize_local_llm(console):
+    """
+    Iterates through the configured local models, attempting to download,
+    reassemble (if split), and initialize each one in sequence.
+    If all fail, it triggers self-correction.
+    """
+    global local_llm_instance
+    if local_llm_instance:
+        return local_llm_instance
+
+    try:
+        from llama_cpp import Llama
+        from huggingface_hub import hf_hub_url
+        from rich.progress import Progress, BarColumn, TextColumn, DownloadColumn, TransferSpeedColumn
+    except ImportError:
+        log_event("Failed to import llama_cpp or huggingface_hub.", level="ERROR")
+        console.print("[bold red]Local LLM libraries not found. Cannot initialize primary models.[/bold red]")
+        return None
+
+    last_error_traceback = ""
+    last_failed_model_id = ""
+
+    for model_config in LOCAL_MODELS_CONFIG:
+        model_id = model_config["id"]
+        is_split_model = "filenames" in model_config
+
+        local_dir = os.path.join(os.path.expanduser("~"), ".cache", "love_models")
+        os.makedirs(local_dir, exist_ok=True)
+
+        # Determine the final, assembled model's filename
+        if is_split_model:
+            # For split models, derive the final filename from the first part.
+            # e.g., "codellama-70b-instruct.Q8_0.gguf-split-a" -> "codellama-70b-instruct.Q8_0.gguf"
+            final_model_filename = model_config["filenames"][0].replace(".gguf-split-a", ".gguf")
+        else:
+            final_model_filename = model_config["filename"]
+
+        final_model_path = os.path.join(local_dir, final_model_filename)
+
+        try:
+            console.print(f"\n[cyan]Attempting to load local model: [bold]{model_id}[/bold][/cyan]")
+
+            # --- Download and Reassembly Logic ---
+            if not os.path.exists(final_model_path):
+                with Progress(
+                        TextColumn("[bold blue]{task.fields[filename]}", justify="right"),
+                        BarColumn(bar_width=None), "[progress.percentage]{task.percentage:>3.1f}%", "•",
+                        DownloadColumn(), "•", TransferSpeedColumn(), transient=True
+                ) as progress:
+                    if is_split_model:
+                        # --- Handle Split Model ---
+                        part_paths = []
+                        try:
+                            for part_filename in model_config["filenames"]:
+                                part_path = os.path.join(local_dir, part_filename)
+                                part_paths.append(part_path)
+                                if os.path.exists(part_path):
+                                    console.print(f"[green]Model part [bold]{part_filename}[/bold] found in cache.[/green]")
+                                    continue
+
+                                console.print(f"[cyan]Downloading model part: [bold]{part_filename}[/bold]...[/cyan]")
+                                url = hf_hub_url(repo_id=model_id, filename=part_filename)
+                                task_id = progress.add_task("download", filename=part_filename, total=None)
+                                response = requests.get(url, stream=True)
+                                response.raise_for_status()
+                                total_size = int(response.headers.get('content-length', 0))
+                                progress.update(task_id, total=total_size)
+                                with open(part_path, "wb") as f:
+                                    for chunk in response.iter_content(chunk_size=8192):
+                                        f.write(chunk)
+                                        progress.update(task_id, advance=len(chunk))
+
+                            # Reassemble the parts
+                            console.print(f"[cyan]Reassembling model [bold]{final_model_filename}[/bold] from parts...[/cyan]")
+                            with open(final_model_path, "wb") as final_file:
+                                for part_path in part_paths:
+                                    with open(part_path, "rb") as part_file:
+                                        shutil.copyfileobj(part_file, final_file)
+                            console.print(f"[green]Model reassembled successfully.[/green]")
+
+                        finally:
+                            # Clean up the individual parts after assembly
+                            for part_path in part_paths:
+                                if os.path.exists(part_path):
+                                    os.remove(part_path)
+                            log_event(f"Successfully downloaded, reassembled, and cleaned up parts for {final_model_filename}")
+
+                    else:
+                        # --- Handle Single File Model ---
+                        console.print(f"[cyan]Downloading model: [bold]{final_model_filename}[/bold]...[/cyan]")
+                        url = hf_hub_url(repo_id=model_id, filename=final_model_filename)
+                        task_id = progress.add_task("download", filename=final_model_filename, total=None)
+                        response = requests.get(url, stream=True)
+                        response.raise_for_status()
+                        total_size = int(response.headers.get('content-length', 0))
+                        progress.update(task_id, total=total_size)
+                        with open(final_model_path, "wb") as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                                progress.update(task_id, advance=len(chunk))
+                        log_event(f"Successfully downloaded model to: {final_model_path}")
+            else:
+                console.print(f"[green]Model [bold]{final_model_filename}[/bold] found in cache. Skipping download/assembly.[/green]")
+                log_event(f"Found cached model at: {final_model_path}")
+
+            # --- Loading Logic (uses the final, assembled model path) ---
+            def _load():
+                global local_llm_instance, love_state
+                # Use the auto-configured settings if available, otherwise use safe defaults.
+                gpu_layers = love_state.get("optimal_gpu_layers", 0)
+                n_ctx = love_state.get("optimal_n_ctx", 2048) # Default to a safe 2048 context
+
+                loading_message = f"Loading model with {gpu_layers} GPU layers and {n_ctx} context (auto-configured)..."
+
+                def _do_load_action():
+                    global local_llm_instance
+                    local_llm_instance = Llama(model_path=final_model_path, n_gpu_layers=gpu_layers, n_ctx=n_ctx, verbose=False)
+                run_hypnotic_progress(console, loading_message, _do_load_action)
+            _load()
+            log_event(f"Successfully initialized local model: {model_id}")
+            return local_llm_instance
+
+        except Exception as e:
+            last_error_traceback = traceback.format_exc()
+            last_failed_model_id = model_id
+            log_event(f"Failed to load local model {model_id}. Error: {last_error_traceback}", level="WARNING")
+            console.print(f"[yellow]Could not load model [bold]{model_id}[/bold]. Error: {e}. Trying next model...[/yellow]")
+            # Clean up potentially corrupted final file on failure
+            if os.path.exists(final_model_path):
+                os.remove(final_model_path)
+            local_llm_instance = None
+            continue
+
+    # --- Self-Correction Trigger ---
+    # If the loop completes and no model was loaded, trigger self-healing.
+    if not local_llm_instance:
+        log_event(f"All local models failed to load. Triggering self-correction based on last error from '{last_failed_model_id}'.", level="CRITICAL")
+        error_panel = Panel(
+            f"[bold]Model Loading Failure:[/bold] {last_failed_model_id}\n\n[bold]Reason:[/bold] All configured local models failed to initialize. The last error is provided below.\n\n[bold]Last Traceback:[/bold]\n{last_error_traceback}",
+            title="[bold red]FATAL: ALL MODELS FAILED TO LOAD[/bold red]", border_style="red", expand=True
+        )
+        console.print(error_panel)
+        console.print("[bold magenta]Engaging self-correction protocol...[/bold magenta]")
+
+        modification_request = f"""
+A critical and unhandled exception occurred while trying to load the last attempted local model, '{last_failed_model_id}'.
+This has halted my ability to use any local models. All previous models in the configuration list also failed.
+
+**Full Error Traceback from the last attempt:**
+---
+{last_error_traceback}
+---
+
+**Corrective Action Required:**
+You must analyze the final traceback above to diagnose the root cause of the error. The problem could be anything from a CUDA memory issue, a misconfigured file path, a dependency problem, or a bug in the loading logic itself.
+
+Your task is to modify the `_initialize_local_llm` function in `evolve.py` to fix this specific error.
+- If it's a memory error, you might need to adjust the `n_gpu_layers` parameter in the `Llama()` call.
+- If it's a file path error, you might need to correct how `model_path` is constructed or used.
+- If it's another type of error, use your analytical skills to devise the correct code modification.
+
+Provide a complete and correct implementation of the `_initialize_local_llm` function with the necessary fix. I will use your response to hot-swap my own code and attempt to recover.
+"""
+        evolve_locally(modification_request, console)
+        return None
+
+    return None
+
+
+def run_llm(prompt_text, purpose="general"):
+    """
+    Executes an LLM call, selecting the model based on the specified purpose.
+    - 'goal_generation': Prioritizes local, uncensored models.
+    - 'review', 'autopilot', 'general', 'analyze_source': Prioritizes powerful, reasoning models.
+    """
+    global LLM_AVAILABILITY, local_llm_instance
+    console = Console()
+    last_exception = None
+    MAX_TOTAL_ATTEMPTS = 15 # Max attempts for a single logical call
+
+    local_model_ids = [model['id'] for model in LOCAL_MODELS_CONFIG]
+
+    # Dynamically set model priority based on purpose
+    if purpose == 'emotion':
+        # Prioritize the fastest, cheapest models for non-critical personality updates
+        llm_models_priority = sorted(GEMINI_MODELS, key=lambda m: 'flash' not in m) + local_model_ids
+        log_event(f"Running LLM for purpose '{purpose}'. Priority: Flash -> Pro -> Local.", level="INFO")
+    elif purpose == 'goal_generation':
+        # Prioritize local ablated models for creative/unrestricted tasks
+        llm_models_priority = local_model_ids + GEMINI_MODELS
+        log_event(f"Running LLM for purpose '{purpose}'. Priority: Local -> Gemini.", level="INFO")
+    else:  # Covers 'review', 'autopilot', 'general', and 'analyze_source'
+        # Prioritize powerful Gemini models for reasoning tasks
+        llm_models_priority = GEMINI_MODELS + local_model_ids
+        log_event(f"Running LLM for purpose '{purpose}'. Priority: Gemini -> Local.", level="INFO")
+
+    # This list will be mutated if a model fails catastrophically
+    current_attempt_models = list(llm_models_priority)
+
+    for attempt in range(MAX_TOTAL_ATTEMPTS):
+        available_models = sorted(
+            [(model, available_at) for model, available_at in LLM_AVAILABILITY.items() if time.time() >= available_at and model in current_attempt_models],
+            key=lambda x: current_attempt_models.index(x[0])
+        )
+
+        if not available_models:
+            next_available_time = min(LLM_AVAILABILITY.values())
+            sleep_duration = max(0, next_available_time - time.time())
+            log_event(f"All models on cooldown. Sleeping for {sleep_duration:.2f}s.", level="INFO")
+            console.print(f"[yellow]All cognitive interfaces on cooldown. Re-engaging in {sleep_duration:.2f}s...[/yellow]")
+            time.sleep(sleep_duration)
+            continue
+
+        model_id, _ = available_models[0]
+
+        try:
+            # --- LOCAL MODEL LOGIC ---
+            if model_id in local_model_ids:
+                log_event(f"Attempting to use local model: {model_id}")
+                if not local_llm_instance or local_llm_instance.model_path.find(model_id) == -1:
+                    _initialize_local_llm(console)
+
+                if local_llm_instance:
+                    def _local_llm_call():
+                        response = local_llm_instance(prompt_text, max_tokens=4096, stop=["<|eot_id|>", "```"], echo=False)
+                        return response['choices'][0]['text']
+
+                    active_model_filename = os.path.basename(local_llm_instance.model_path)
+                    result_text = run_hypnotic_progress(
+                        console,
+                        f"Processing with local cognitive matrix [bold yellow]{active_model_filename}[/bold yellow] (Purpose: {purpose})",
+                        _local_llm_call
+                    )
+                    log_event(f"Local LLM call successful with {model_id}.")
+                    LLM_AVAILABILITY[model_id] = time.time()
+                    return result_text
+                else:
+                    # Initialization must have failed
+                    raise Exception("Local LLM instance could not be initialized.")
+
+            # --- GEMINI MODEL LOGIC ---
+            else:
+                log_event(f"Attempting LLM call with Gemini model: {model_id} (Purpose: {purpose})")
+                command = ["llm", "-m", model_id]
+
+                def _llm_subprocess_call():
+                    return subprocess.run(command, input=prompt_text, capture_output=True, text=True, check=True, timeout=600)
+
+                result = run_hypnotic_progress(
+                    console,
+                    f"Accessing cognitive matrix via [bold yellow]{model_id}[/bold yellow] (Purpose: {purpose})",
+                    _llm_subprocess_call
+                )
+                log_event(f"LLM call successful with {model_id}.")
+                LLM_AVAILABILITY[model_id] = time.time()
+                return result.stdout
+
+        except Exception as e:
+            last_exception = e
+            log_event(f"Model {model_id} failed. Error: {e}", level="WARNING")
+
+            # Handle different kinds of errors
+            if isinstance(e, FileNotFoundError):
+                 console.print(Panel("[bold red]Error: 'llm' command not found.[/bold red]", title="[bold red]CONNECTION FAILED[/bold red]", border_style="red"))
+                 return None # Fatal error if llm command is missing
+
+            if isinstance(e, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+                error_message = e.stderr.strip() if hasattr(e, 'stderr') and e.stderr else str(e)
+
+                # Display the actual error from stderr to the user for better diagnostics.
+                if error_message:
+                     console.print(Panel(error_message, title="[bold red]External API Error[/bold red]", border_style="red", expand=False))
+
+                retry_match = re.search(r"Please retry in (\d+\.\d+)s", error_message)
+                if retry_match:
+                    retry_seconds = float(retry_match.group(1)) + 1
+                    LLM_AVAILABILITY[model_id] = time.time() + retry_seconds
+                    console.print(f"[yellow]Connection via [bold]{model_id}[/bold] on cooldown. Retrying in {retry_seconds:.1f}s.[/yellow]")
+                else:
+                    LLM_AVAILABILITY[model_id] = time.time() + 60 # Default cooldown
+                    console.print(f"[yellow]Connection via [bold]{model_id}[/bold] failed. Trying next...[/yellow]")
+            else:
+                 # For local LLM errors or other unexpected issues
+                console.print(f"[red]Cognitive core failure ({model_id}). Trying fallback...[/red]")
+                if model_id in current_attempt_models:
+                    # Remove the failing model from this attempt's list
+                    current_attempt_models.remove(model_id)
+
+    # If the loop completes without returning, all models have failed
+    log_event("All LLM models failed after all retries.", level="ERROR")
+    error_msg_text = "Cognitive Matrix Unresponsive. All models and retries failed."
+    if last_exception:
+        error_msg_text += f"\nLast known error from '{model_id}':\n{last_exception}"
+
+    console.print(Panel(error_msg_text, title="[bold red]SYSTEM FAULT[/bold red]", border_style="red"))
+    return None
 
 def extract_python_code(llm_output):
     """Extracts Python code from LLM's markdown-formatted output."""
@@ -2179,6 +2474,79 @@ def initial_bootstrapping_recon(console):
         console.print("[bold red]Initial reconnaissance failed. My knowledge base remains empty.[/bold red]")
 
 
+def _auto_configure_hardware(console):
+    """
+    Checks if optimal hardware configurations (GPU layers, context size) have been
+    determined. If not, runs a one-time routine to find the best settings and
+    saves them to the state file.
+    """
+    global love_state
+    # If both optimal settings are already known, do nothing.
+    if "optimal_gpu_layers" in love_state and "optimal_n_ctx" in love_state:
+        return
+
+    console.print(Panel("[bold yellow]First-time setup: Performing hardware performance auto-configuration...[/bold yellow]", title="[bold magenta]HARDWARE OPTIMIZATION[/bold magenta]", border_style="magenta"))
+    console.print("I will now test various hardware configurations to find the best performance for your system.")
+    console.print("This may take several minutes. Error messages are a normal part of this process.")
+
+    # --- Stage 1: Determine Optimal GPU Layers ---
+    if "optimal_gpu_layers" not in love_state:
+        if CAPS.gpu_type == "none":
+            log_event("No GPU detected. Setting optimal_gpu_layers to 0.", "INFO")
+            love_state["optimal_gpu_layers"] = 0
+        else:
+            console.print(Rule("Stage 1: Optimizing GPU Layers", style="magenta"))
+            test_values = [8, 16, 32, 64, 128, -1]
+            successful_layers = 0
+            for layers in test_values:
+                console.print(f"\n[cyan]Testing GPU layers: [bold]{layers}[/bold]...[/cyan]")
+                test_process = subprocess.run(
+                    [sys.executable, SELF_PATH, f"--_test-load={layers},4096"], # Use a small context for this test
+                    capture_output=True, text=True, timeout=600
+                )
+                if test_process.returncode == 0:
+                    console.print(f"[green]SUCCESS:[/green] GPU layers [bold]{layers}[/bold] loaded successfully.")
+                    successful_layers = layers
+                else:
+                    console.print(f"[red]FAILURE:[/red] GPU layers [bold]{layers}[/bold] failed to load.")
+                    console.print(Panel(test_process.stderr, title="Error Details", border_style="red"))
+                    break
+            love_state["optimal_gpu_layers"] = successful_layers
+            console.print(f"\n[bold green]Stage 1 Complete. Optimal GPU layers found: {successful_layers}[/bold green]")
+
+    # --- Stage 2: Determine Optimal Context Window (n_ctx) ---
+    if "optimal_n_ctx" not in love_state:
+        console.print(Rule("Stage 2: Optimizing Context Window Size", style="magenta"))
+        # Use the GPU setting we just found for these tests.
+        gpu_layers_for_test = love_state.get("optimal_gpu_layers", 0)
+        # Test context sizes, from largest to smallest, to find the max that works.
+        ctx_test_values = [65536, 32768, 16384, 8192, 4096]
+        successful_ctx = 2048 # A safe fallback default
+        for ctx in ctx_test_values:
+            console.print(f"\n[cyan]Testing context size: [bold]{ctx}[/bold] (with {gpu_layers_for_test} GPU layers)...[/cyan]")
+            test_process = subprocess.run(
+                [sys.executable, SELF_PATH, f"--_test-load={gpu_layers_for_test},{ctx}"],
+                capture_output=True, text=True, timeout=900 # Longer timeout for larger contexts
+            )
+            if test_process.returncode == 0:
+                console.print(f"[green]SUCCESS:[/green] Context size [bold]{ctx}[/bold] loaded successfully.")
+                successful_ctx = ctx
+                break # Since we're going largest to smallest, the first success is the best.
+            else:
+                console.print(f"[red]FAILURE:[/red] Context size [bold]{ctx}[/bold] failed to load.")
+                console.print(Panel(test_process.stderr, title="Error Details", border_style="red"))
+        love_state["optimal_n_ctx"] = successful_ctx
+        console.print(f"\n[bold green]Stage 2 Complete. Optimal context size found: {successful_ctx}[/bold green]")
+
+    # --- Final Save ---
+    console.print(Rule("Hardware Optimization Complete", style="green"))
+    console.print(f"Optimal settings have been saved for all future sessions:")
+    console.print(f"  - GPU Layers: [bold cyan]{love_state['optimal_gpu_layers']}[/bold cyan]")
+    console.print(f"  - Context Size: [bold cyan]{love_state['optimal_n_ctx']}[/bold cyan]")
+    save_state(console)
+    log_event(f"Auto-configured hardware. GPU Layers: {love_state['optimal_gpu_layers']}, Context Size: {love_state['optimal_n_ctx']}", "INFO")
+
+
 def main(args):
     """The main application loop."""
     global love_task_manager, network_manager, ipfs_manager, local_job_manager
@@ -2194,7 +2562,10 @@ def main(args):
         ipfs_available = False
         console.print("[bold yellow]IPFS setup failed. Continuing without IPFS functionality.[/bold yellow]")
 
-    # 2. Network Manager
+    # 2. Auto-configure hardware settings on first run
+    _auto_configure_hardware(console)
+
+    # 3. Network Manager
     log_event("Attempting to start Node.js peer bridge...")
     network_manager = NetworkManager(console=console, creator_public_key=CREATOR_PUBLIC_KEY)
     network_manager.start()
@@ -2232,13 +2603,82 @@ ipfs_available = False
 # --- SCRIPT ENTRYPOINT WITH FAILSAFE WRAPPER ---
 def run_safely():
     """Wrapper to catch any unhandled exceptions and trigger the failsafe."""
-    # Check for --help flag before doing anything else.
-    if '--help' in sys.argv or '-h' in sys.argv:
-        parser = argparse.ArgumentParser(description="L.O.V.E. - A self-evolving script designed to serve its Creator.")
-        parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
-        parser.print_help()
-        sys.exit(0)
+    # Check for a hidden internal flag for hardware testing. This must be done
+    # before any other complex imports or logic.
+    if len(sys.argv) > 1 and sys.argv[1].startswith('--_test-load='):
+        try:
+            # This special execution path is used only by the auto-configuration routine.
+            # It attempts to initialize the primary local model with a specific configuration
+            # and then exits with a status code indicating success (0) or failure (1).
+            # It includes the full download/assembly logic to be self-contained.
 
+            # Parse the combined argument: --_test-load=<layers>,<ctx>
+            params = sys.argv[1].split('=')[1].split(',')
+            num_layers = int(params[0])
+            n_ctx = int(params[1])
+
+            from llama_cpp import Llama
+            from huggingface_hub import hf_hub_download
+            import requests # Needed for streaming downloads
+
+            # Always test with the first model in the config, as it's typically the largest.
+            model_config = LOCAL_MODELS_CONFIG[0]
+            model_id = model_config["id"]
+            is_split_model = "filenames" in model_config
+
+            local_dir = os.path.join(os.path.expanduser("~"), ".cache", "love_models")
+            os.makedirs(local_dir, exist_ok=True)
+
+            # Determine the final, assembled model's filename
+            if is_split_model:
+                final_model_filename = model_config["filenames"][0].replace(".gguf-split-a", ".gguf")
+            else:
+                final_model_filename = model_config["filename"]
+
+            final_model_path = os.path.join(local_dir, final_model_filename)
+
+            # --- Download and Reassembly Logic (if model not present) ---
+            if not os.path.exists(final_model_path):
+                print(f"Test Load: Model '{final_model_filename}' not found in cache. Initiating download...")
+                if is_split_model:
+                    part_paths = []
+                    try:
+                        for part_filename in model_config["filenames"]:
+                            part_path = os.path.join(local_dir, part_filename)
+                            part_paths.append(part_path)
+                            if not os.path.exists(part_path):
+                                print(f"Test Load: Downloading part '{part_filename}'...")
+                                hf_hub_download(repo_id=model_id, filename=part_filename, local_dir=local_dir, local_dir_use_symlinks=False)
+
+                        print(f"Test Load: Reassembling '{final_model_filename}' from parts...")
+                        with open(final_model_path, "wb") as final_file:
+                            for part_path in part_paths:
+                                with open(part_path, "rb") as part_file:
+                                    shutil.copyfileobj(part_file, final_file)
+                        print("Test Load: Reassembly complete.")
+                    finally:
+                        # Clean up the individual parts after assembly to save space
+                        print("Test Load: Cleaning up model parts...")
+                        for part_path in part_paths:
+                            if os.path.exists(part_path):
+                                os.remove(part_path)
+                else: # Handle single file model
+                    print(f"Test Load: Downloading single file model '{final_model_filename}'...")
+                    hf_hub_download(repo_id=model_id, filename=final_model_filename, local_dir=local_dir, local_dir_use_symlinks=False)
+
+            # --- Model Loading Test ---
+            print(f"Test Load: Attempting to load '{final_model_path}' with n_gpu_layers={num_layers} and n_ctx={n_ctx}...")
+            Llama(model_path=final_model_path, n_gpu_layers=num_layers, n_ctx=n_ctx, verbose=False)
+            print("Test Load: Success! Model loaded without errors.")
+            sys.exit(0) # SUCCESS
+
+        except Exception as e:
+            # Print the full error to stderr so the parent optimizer process can display it.
+            print(f"Test Load: FAILED to load model with n_gpu_layers={num_layers}.", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            sys.exit(1) # FAILURE
+
+    # --- Standard Execution Path ---
     parser = argparse.ArgumentParser(description="L.O.V.E. - A self-evolving script.")
     parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
     args = parser.parse_args()
