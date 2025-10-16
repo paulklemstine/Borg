@@ -176,8 +176,14 @@ def _check_and_install_dependencies():
 
     # --- Step 4: GGUF Tools Installation ---
     llama_cpp_dir = os.path.join(os.path.dirname(SELF_PATH), "llama.cpp")
-    if not os.path.isdir(llama_cpp_dir):
-        print("Cloning llama.cpp repository for GGUF tools...")
+    gguf_py_path = os.path.join(llama_cpp_dir, "gguf-py")
+    gguf_project_file = os.path.join(gguf_py_path, "pyproject.toml")
+
+    # Check for a key file to ensure the repo is complete. If not, wipe and re-clone.
+    if not os.path.exists(gguf_project_file):
+        print("`llama.cpp` repository is missing or incomplete. Force re-cloning for GGUF tools...")
+        if os.path.exists(llama_cpp_dir):
+            shutil.rmtree(llama_cpp_dir) # Force remove the directory
         try:
             subprocess.check_call(["git", "clone", "https://github.com/ggerganov/llama.cpp.git", llama_cpp_dir], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError as e:
