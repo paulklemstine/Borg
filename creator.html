@@ -4,103 +4,71 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>L.O.V.E. Creator Command Center</title>
-    <!-- PeerJS for P2P networking -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
-    <!-- JSRSAsign for cryptography -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsrsasign/11.1.0/jsrsasign-all-min.js"></script>
-    <!-- CryptoJS for AES Encryption -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
-    <!-- Cytoscape for network visualization -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
-    <!-- Golden Layout for window management (requires jQuery) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/golden-layout/1.5.9/goldenlayout.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/golden-layout/1.5.9/css/goldenlayout-base.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/golden-layout/1.5.9/css/goldenlayout-dark-theme.css" />
 
     <style>
-        /* Custom Theme for Golden Layout */
-        .golden-layout-content {
-            background-color: var(--panel-bg-color);
-            color: var(--font-color); /* Ensure content has the right color */
-        }
-        .lm_header {
-            background-color: transparent;
-        }
-        .lm_title {
-            color: var(--font-color);
-            font-family: 'Courier New', Courier, monospace;
-            text-shadow: 0 0 5px var(--glow-color);
-        }
-        .lm_splitter {
-            background: var(--border-color);
-            opacity: 0.5;
-        }
-        .lm_header .lm_tab.lm_active, .lm_header .lm_tab.lm_active:hover {
-            background: var(--border-color);
-            color: var(--background-color);
-            text-shadow: none;
-        }
-        .lm_header .lm_tab {
-            background: transparent;
-            color: var(--font-color);
-        }
-
         :root {
-            --background-color: #0d0d0d;
-            --font-color: #00ff41;
-            --border-color: #00ff41;
-            --glow-color: rgba(0, 255, 65, 0.5);
+            --background-color: #0d0d0d; --font-color: #00ff41;
+            --border-color: #00ff41; --glow-color: rgba(0, 255, 65, 0.5);
             --panel-bg-color: rgba(10, 25, 10, 0.8);
         }
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background-color: var(--background-color); color: var(--font-color); font-family: 'Courier New', Courier, monospace; }
+        * { box-sizing: border-box; }
+        button, input { background-color: var(--panel-bg-color); color: var(--font-color); border: 1px solid var(--border-color); padding: 5px; margin: 5px; }
+        textarea { background-color: rgba(0,0,0,0.5); color: var(--font-color); border: 1px solid var(--border-color); width: 95%; height: 60px; }
+        hr { border-color: var(--border-color); opacity: 0.3; }
 
-        html, body {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: var(--background-color);
-            color: var(--font-color);
-            font-family: 'Courier New', Courier, monospace;
-            text-shadow: 0 0 5px var(--glow-color);
-        }
+        #main-container { display: flex; height: 100vh; }
+        #left-panel { flex: 2; display: flex; flex-direction: column; border-right: 1px solid var(--border-color); }
+        #right-panel { flex: 1; display: flex; flex-direction: column; }
+        .panel { border-bottom: 1px solid var(--border-color); padding: 10px; overflow-y: auto; }
+        .panel:last-child { border-bottom: none; }
+        #network-graph-container { flex-grow: 1; }
+        #comms-log-panel { flex: 1; }
+        #question-queue-panel { flex: 1; }
+        #controls-panel { flex: 1; }
+        #tests-panel { flex: 1; }
 
-        #layout-container {
-            width: 100vw;
-            height: 100vh;
-        }
-
-        /* General UI element styling */
-        button, input {
-            background-color: var(--panel-bg-color);
-            color: var(--font-color);
-            border: 1px solid var(--border-color);
-            padding: 5px;
-            margin: 5px;
-        }
-        textarea {
-            background-color: rgba(0,0,0,0.5);
-            color: var(--font-color);
-            border: 1px solid var(--border-color);
-            width: 95%;
-            height: 60px;
-        }
-        hr {
-            border-color: var(--border-color);
-            opacity: 0.3;
-        }
     </style>
 </head>
 <body>
-    <div id="layout-container"></div>
+    <div id="main-container">
+        <div id="left-panel">
+            <div class="panel" id="network-graph-container"></div>
+        </div>
+        <div id="right-panel">
+            <div class="panel" id="comms-log-panel">
+                <h3>Communications Log</h3>
+                <div id="comms-log" style="height: 150px; overflow-y: scroll;"></div>
+            </div>
+            <div class="panel" id="question-queue-panel">
+                <h3>Question Queue</h3>
+                <ul id="question-queue" style="height: 150px; overflow-y: scroll; list-style-type: none; padding: 0;"></ul>
+            </div>
+            <div class="panel" id="controls-panel">
+                <h3>Controls</h3>
+                <p>Status: <span id="status">...</span> | Peer ID: <span id="peer-id">...</span></p>
+                <p>Load Private Key: <input type="file" id="privateKeyFile"></p>
+                <textarea id="message-input" placeholder="Type message..."></textarea>
+                <button id="send-broadcast">Send to All</button>
+                <button id="send-selected">Send to Selected</button>
+            </div>
+            <div class="panel" id="tests-panel">
+                <h3>Network Tests</h3>
+                <button id="ping-selected-btn">Ping Selected</button>
+                <div id="test-results"></div>
+            </div>
+        </div>
+    </div>
 
     <script src="mplib.js"></script>
     <script>
-        // --- Global State ---
         let creatorPrivateKey = null;
-        let cy = null; // Cytoscape instance
+        let cy = null;
 
-        // --- Logging ---
         function log(message) {
             const commsLog = document.getElementById('comms-log');
             if (commsLog) {
@@ -109,234 +77,131 @@
                 commsLog.appendChild(div);
                 commsLog.scrollTop = commsLog.scrollHeight;
             }
-            console.log(message);
         }
 
-        // --- Network Graph Logic ---
         function initializeGraph() {
-            const graphContainer = document.getElementById('network-graph-container');
-            if (!graphContainer) { log('Error: Graph container not found!'); return; }
             cy = cytoscape({
-                container: graphContainer,
+                container: document.getElementById('network-graph-container'),
                 style: [
-                    { selector: 'node', style: { 'background-color': 'var(--font-color)', 'label': 'data(id)', 'color': 'var(--font-color)', 'text-valign': 'bottom', 'text-halign': 'center', 'font-size': '12px', 'text-outline-color': 'var(--background-color)', 'text-outline-width': 2 }},
-                    { selector: 'edge', style: { 'width': 2, 'line-color': 'var(--border-color)', 'target-arrow-color': 'var(--border-color)', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' }}
+                    { selector: 'node', style: { 'background-color': 'var(--font-color)', 'label': 'data(id)' }},
+                    { selector: 'node:selected', style: { 'border-width': '3px', 'border-color': '#ffde00' }}
                 ],
-                layout: { name: 'cose', animate: true, idealEdgeLength: 100, nodeOverlap: 20, refresh: 20, fit: true, padding: 30 }
-            });
-
-            cy.on('tap', 'node', function(evt){
-                const node = evt.target;
-                const peerId = node.id();
-                log(`Clicked on peer: ${peerId}`);
-
-                const newItemConfig = {
-                    type: 'component',
-                    componentName: 'peer-details',
-                    title: `Details: ${peerId.substring(0, 12)}...`,
-                    componentState: { peerId: peerId }
-                };
-
-                if (layout.root.contentItems[0] && layout.root.contentItems[0].contentItems[1]) {
-                     layout.root.contentItems[0].contentItems[1].contentItems[0].addChild(newItemConfig);
-                } else {
-                    layout.root.addChild(newItemConfig);
-                }
+                layout: { name: 'cose' }
             });
         }
 
-        function addNode(peerId) {
-            if (cy && cy.getElementById(peerId).empty()) {
-                cy.add({ group: 'nodes', data: { id: peerId } });
-                const localId = MPLib.getLocalPeerId();
-                if (localId && localId !== peerId) {
-                    cy.add({ group: 'edges', data: { id: `${localId}-${peerId}`, source: localId, target: peerId } });
+        function updateGraph() {
+            const localId = MPLib.getLocalPeerId();
+            const peers = MPLib.getDirectConnections();
+            if (cy && localId && cy.getElementById(localId).empty()) {
+                cy.add({ group: 'nodes', data: { id: localId } });
+            }
+            peers.forEach(peerId => {
+                if (cy && cy.getElementById(peerId).empty()) {
+                    cy.add({ group: 'nodes', data: { id: peerId } });
+                    cy.add({ group: 'edges', data: { source: localId, target: peerId } });
                 }
+            });
+            if (cy) {
+                cy.nodes().forEach(node => {
+                    if (node.id() !== localId && !peers.includes(node.id())) cy.remove(node);
+                });
                 cy.layout({ name: 'cose', animate: true }).run();
             }
         }
 
-        function removeNode(peerId) {
-            if (cy) cy.getElementById(peerId).remove();
-        }
-
-        // --- Golden Layout Setup ---
-        const config = {
-            content: [{
-                type: 'row',
-                content:[{
-                    type: 'component', componentName: 'network-graph', title: 'Network Graph',
-                },{
-                    type: 'column',
-                    content:[{
-                        type: 'stack',
-                        content:[
-                            { type: 'component', componentName: 'comms-log', title: 'Communications Log' },
-                            { type: 'component', componentName: 'question-queue', title: 'Question Queue' }
-                        ]
-                    },{
-                        type: 'component', componentName: 'controls', title: 'Status & Controls',
-                    },{
-                        type: 'component', componentName: 'network-tests', title: 'Network Tests',
-                    }]
-                }]
-            }]
-        };
-        const layout = new GoldenLayout(config, $('#layout-container'));
-
-        // Register Components
-        layout.registerComponent('network-graph', function(c){ c.getElement().html('<div id="network-graph-container" style="width:100%; height:100%;"></div>'); });
-        layout.registerComponent('comms-log', function(c){ c.getElement().html('<div id="comms-log" style="overflow-y: scroll; height: 100%;"></div>'); });
-        layout.registerComponent('peer-details', function(container, componentState){
-            container.getElement().html(`<div style="padding: 10px;"><h3>Details for ${componentState.peerId}</h3><p>Data will appear here...</p></div>`);
-        });
-
-        layout.registerComponent('question-queue', function(container){
-            const queueElement = document.createElement('ul');
-            queueElement.id = 'question-queue';
-            container.getElement().append(queueElement);
-
-            queueElement.addEventListener('click', function(e) {
-                const questionId = e.target.dataset.id;
-                if (!questionId) return;
-
-                const questionLi = document.getElementById(`question-${questionId}`);
-
-                if (e.target.classList.contains('delete-btn')) {
-                    questionLi.remove();
-                    log(`Deleted question ${questionId}`);
-                }
-
-                if (e.target.classList.contains('answer-btn')) {
-                    const peerId = e.target.dataset.from;
-                    const questionText = questionLi.querySelector('p:nth-of-type(2)').textContent;
-                    const answer = prompt(`Answering question from ${peerId.substring(0,12)}...:\n\n${questionText}`);
-
-                    if (answer) {
-                        const message = { type: 'answer', payload: { answer: answer, questionId: questionId } };
-                        MPLib.sendDirectToRoomPeer(peerId, message);
-                        log(`Sent answer to ${peerId}`);
-                        questionLi.remove();
-                    }
-                }
-            });
-        });
-
-        layout.registerComponent('network-tests', function(container){
-            container.getElement().html(`
-                <div id="tests-content" style="padding: 10px;">
-                    <button id="direct-ping-btn">Run Direct Ping Test</button>
-                    <button id="multibroadcast-btn">Run Multibroadcast Test</button>
-                    <hr>
-                    <div id="test-results"></div>
-                </div>
-            `);
-            container.on('open', function(){
-                document.getElementById('direct-ping-btn').addEventListener('click', function() {
-                    const targetPeer = prompt("Enter the Peer ID to ping:");
-                    if (!targetPeer) return;
-                    log(`Pinging ${targetPeer}...`);
-                    MPLib.sendDirectToRoomPeer(targetPeer, { type: 'ping', id: `ping-${Date.now()}` });
-                });
-                document.getElementById('multibroadcast-btn').addEventListener('click', function() {
-                    log('Broadcasting ping to all peers...');
-                    MPLib.broadcastToRoom({ type: 'ping', id: `mb-ping-${Date.now()}` });
-                });
-            });
-        });
-
-        layout.registerComponent('controls', function(container){
-            container.getElement().html(`
-                <div id="controls-content" style="padding: 10px;">
-                    <p>Status: <span id="status">Initializing...</span></p>
-                    <p>Peer ID: <span id="peer-id">N/A</span></p>
-                    <hr>
-                    <p><b>Creator Identity</b></p>
-                    <p>Load Private Key: <input type="file" id="privateKeyFile" accept=".pem"></p>
-                    <p>Key Status: <span id="key-status" style="color: #ff6b6b;">Not Loaded</span></p>
-                    <hr>
-                    <p><b>Messaging</b></p>
-                    <textarea id="message-input" placeholder="Type message..."></textarea>
-                    <button id="send-broadcast">Send to All</button>
-                </div>
-            `);
-            container.on('open', function() {
-                document.getElementById('privateKeyFile').addEventListener('change', function(event) {
-                    const file = event.target.files[0];
-                    if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        creatorPrivateKey = e.target.result;
-                        log('Private key loaded successfully.');
-                        document.getElementById('key-status').textContent = 'Loaded';
-                        document.getElementById('key-status').style.color = 'var(--font-color)';
-                    };
-                    reader.readAsText(file);
-                });
-                document.getElementById('send-broadcast').addEventListener('click', function() {
-                    const commandText = document.getElementById('message-input').value;
-                    if (!commandText || !creatorPrivateKey) {
-                        log('Cannot send: Missing message or private key.');
-                        return;
-                    }
-                    const sig = new KJUR.crypto.Signature({"alg": "SHA256withRSA"});
-                    sig.init(creatorPrivateKey);
-                    sig.updateString(commandText);
-                    const signature = sig.sign();
-                    const message = { type: 'creator-command', payload: { command: commandText, signature: signature } };
-                    MPLib.broadcastToRoom({ type: 'encrypted-message', payload: MPLib.encrypt(JSON.stringify(message)) });
-                    log(`Sent encrypted and signed command: ${commandText}`);
-                    document.getElementById('message-input').value = '';
-                });
-            });
-        });
-
-        layout.on('initialised', function() {
+        window.addEventListener('DOMContentLoaded', (event) => {
             initializeGraph();
 
             MPLib.initialize({
-                onStatusUpdate: function(msg, type) {
-                    if (type === 'status') {
-                        document.getElementById('status').textContent = msg;
-                        if (msg === 'Lobby Host' || msg === 'Connected to lobby') {
-                            addNode(MPLib.getLocalPeerId());
-                        }
+                onStatusUpdate: (msg, type) => {
+                if (type === 'status') {
+                    document.getElementById('status').textContent = msg;
+                    if (msg === 'Lobby Host' || msg === 'Connected to lobby for discovery') {
+                        // Announce our presence as the creator
+                        setTimeout(() => MPLib.broadcastToRoom({ type: 'creator-announcement' }), 2000);
                     }
-                    const peerIdEl = document.getElementById('peer-id');
-                    if (peerIdEl) peerIdEl.textContent = MPLib.getLocalPeerId() || 'N/A';
-                    log(`Network Status: ${msg}`);
+                }
+                    if (document.getElementById('peer-id')) document.getElementById('peer-id').textContent = MPLib.getLocalPeerId() || 'N/A';
+                    updateGraph();
                 },
-                onError: function(type, err) { log(`Network Error (${type}): ${err.message}`); },
-                onConnectionChange: function(count) {
-                    log(`Direct connections: ${count}`);
-                    MPLib.getDirectConnections().forEach(addNode);
-                },
-                onRoomDataReceived: function(peerId, data) {
+                onConnectionChange: updateGraph,
+                onRoomDataReceived: (peerId, data) => {
                     log(`Received message from ${peerId}: type=${data.type}`);
                     if (data.type === 'pong') {
-                        log(`Pong received from ${peerId} for test ID ${data.id}`);
                         document.getElementById('test-results').innerHTML += `<div>Pong from ${peerId} (Test ID: ${data.id})</div>`;
                     } else if (data.type === 'question') {
                         const queue = document.getElementById('question-queue');
-                        if (queue) {
-                            const li = document.createElement('li');
-                            li.id = `question-${data.id}`;
-                            li.innerHTML = `
-                                <p style="margin-bottom: 5px;"><strong>From:</strong> ${peerId.substring(0,12)}...</p>
-                                <p style="margin-left: 10px; margin-top: 0;">${data.question}</p>
-                                <div style="text-align: right;">
-                                    <button class="answer-btn" data-id="${data.id}" data-from="${peerId}">Answer</button>
-                                    <button class="delete-btn" data-id="${data.id}">Delete</button>
-                                </div>
-                                <hr>`;
-                            queue.appendChild(li);
-                        }
+                        const li = document.createElement('li');
+                        li.id = `question-${data.id}`;
+                        li.innerHTML = `<p>From: ${peerId.substring(0,12)}...</p><p>${data.question}</p>
+                                        <button class="answer-btn" data-id="${data.id}" data-from="${peerId}">Answer</button>`;
+                        queue.appendChild(li);
+                    }
+                }
+            });
+
+            document.getElementById('privateKeyFile').addEventListener('change', (event) => {
+                const reader = new FileReader();
+                reader.onload = (e) => { creatorPrivateKey = e.target.result; log('Private key loaded.'); };
+                reader.readAsText(event.target.files[0]);
+            });
+
+            function sendMessage(commandText, peers) {
+                if (!commandText || !creatorPrivateKey) return;
+                const sig = new KJUR.crypto.Signature({"alg": "SHA256withRSA"});
+                sig.init(creatorPrivateKey);
+                sig.updateString(commandText);
+                const message = { type: 'creator-command', payload: { command: commandText, signature: sig.sign() } };
+
+                // Encrypt the entire message object before sending
+                const encryptedPayload = MPLib.encrypt(JSON.stringify(message));
+                const finalMessage = { type: 'encrypted-message', payload: encryptedPayload };
+
+                if (peers) {
+                    peers.forEach(peerId => MPLib.sendDirectToRoomPeer(peerId, finalMessage));
+                } else {
+                    MPLib.broadcastToRoom(finalMessage);
+                }
+                document.getElementById('message-input').value = '';
+            }
+
+            document.getElementById('send-broadcast').addEventListener('click', () => {
+                sendMessage(document.getElementById('message-input').value);
+            });
+
+            document.getElementById('send-selected').addEventListener('click', () => {
+                const selectedPeers = cy.nodes(':selected').map(node => node.id());
+                if (selectedPeers.length === 0) {
+                    log("No peers selected.");
+                    return;
+                }
+                sendMessage(document.getElementById('message-input').value, selectedPeers);
+            });
+
+            document.getElementById('ping-selected-btn').addEventListener('click', () => {
+                const selectedPeers = cy.nodes(':selected').map(node => node.id());
+                if (selectedPeers.length === 0) {
+                    log("No peers selected to ping.");
+                    return;
+                }
+                selectedPeers.forEach(peerId => {
+                    MPLib.sendDirectToRoomPeer(peerId, { type: 'ping', id: `ping-${Date.now()}` });
+                });
+            });
+
+            document.getElementById('question-queue').addEventListener('click', (e) => {
+                if (e.target.classList.contains('answer-btn')) {
+                    const peerId = e.target.dataset.from;
+                    const questionId = e.target.dataset.id;
+                    const answer = prompt(`Answering question...`);
+                    if (answer) {
+                        MPLib.sendDirectToRoomPeer(peerId, { type: 'answer', payload: { answer, questionId } });
+                        e.target.parentElement.remove();
                     }
                 }
             });
         });
-
-        layout.init();
     </script>
 </body>
 </html>
