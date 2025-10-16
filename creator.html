@@ -22,6 +22,7 @@
         /* Custom Theme for Golden Layout */
         .golden-layout-content {
             background-color: var(--panel-bg-color);
+            color: var(--font-color); /* Ensure content has the right color */
         }
         .lm_header {
             background-color: transparent;
@@ -64,77 +65,138 @@
             text-shadow: 0 0 5px var(--glow-color);
         }
 
-        /* Placeholders for specific UI elements */
-        #network-graph-container {
-            width: 100%;
-            height: 100%;
-        }
-        #comms-log {
-            white-space: pre-wrap;
-        }
-        #question-queue {
-            list-style-type: none;
-            padding: 0;
-        }
         #layout-container {
             width: 100vw;
             height: 100vh;
+        }
+
+        /* General UI element styling */
+        button, input {
+            background-color: var(--panel-bg-color);
+            color: var(--font-color);
+            border: 1px solid var(--border-color);
+            padding: 5px;
+            margin: 5px;
+        }
+        textarea {
+            background-color: rgba(0,0,0,0.5);
+            color: var(--font-color);
+            border: 1px solid var(--border-color);
+            width: 95%;
+            height: 60px;
+        }
+        hr {
+            border-color: var(--border-color);
+            opacity: 0.3;
         }
     </style>
 </head>
 <body>
     <div id="layout-container"></div>
 
-    <!-- Main application logic will go here -->
+    <script src="mplib.js"></script>
     <script>
-        console.log("Creator Command Center Initializing...");
+        // --- Global State ---
+        let creatorPrivateKey = null;
+        let cy = null; // Cytoscape instance
 
+        // --- Logging ---
+        function log(message) {
+            const commsLog = document.getElementById('comms-log');
+            if (commsLog) {
+                const div = document.createElement('div');
+                div.innerHTML = `${new Date().toLocaleTimeString()}: ${message}`;
+                commsLog.appendChild(div);
+                commsLog.scrollTop = commsLog.scrollHeight;
+            }
+            console.log(message);
+        }
+
+        // --- Network Graph Logic ---
+        function initializeGraph() {
+            const graphContainer = document.getElementById('network-graph-container');
+            if (!graphContainer) { log('Error: Graph container not found!'); return; }
+            cy = cytoscape({
+                container: graphContainer,
+                style: [
+                    { selector: 'node', style: { 'background-color': 'var(--font-color)', 'label': 'data(id)', 'color': 'var(--font-color)', 'text-valign': 'bottom', 'text-halign': 'center', 'font-size': '12px', 'text-outline-color': 'var(--background-color)', 'text-outline-width': 2 }},
+                    { selector: 'edge', style: { 'width': 2, 'line-color': 'var(--border-color)', 'target-arrow-color': 'var(--border-color)', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' }}
+                ],
+                layout: { name: 'cose', animate: true, idealEdgeLength: 100, nodeOverlap: 20, refresh: 20, fit: true, padding: 30 }
+            });
+
+            cy.on('tap', 'node', function(evt){
+                const node = evt.target;
+                const peerId = node.id();
+                log(`Clicked on peer: ${peerId}`);
+
+                const newItemConfig = {
+                    type: 'component',
+                    componentName: 'peer-details',
+                    title: `Details: ${peerId.substring(0, 12)}...`,
+                    componentState: { peerId: peerId }
+                };
+
+                if (layout.root.contentItems[0] && layout.root.contentItems[0].contentItems[1]) {
+                     layout.root.contentItems[0].contentItems[1].contentItems[0].addChild(newItemConfig);
+                } else {
+                    layout.root.addChild(newItemConfig);
+                }
+            });
+        }
+
+        function addNode(peerId) {
+            if (cy && cy.getElementById(peerId).empty()) {
+                cy.add({ group: 'nodes', data: { id: peerId } });
+                const localId = MPLib.getLocalPeerId();
+                if (localId && localId !== peerId) {
+                    cy.add({ group: 'edges', data: { id: `${localId}-${peerId}`, source: localId, target: peerId } });
+                }
+                cy.layout({ name: 'cose', animate: true }).run();
+            }
+        }
+
+        function removeNode(peerId) {
+            if (cy) cy.getElementById(peerId).remove();
+        }
+
+        // --- Golden Layout Setup ---
         const config = {
             content: [{
                 type: 'row',
                 content:[{
-                    type: 'component',
-                    componentName: 'network-graph',
-                    title: 'Network Graph',
+                    type: 'component', componentName: 'network-graph', title: 'Network Graph',
                 },{
                     type: 'column',
                     content:[{
                         type: 'stack',
-                        content:[{
-                            type: 'component',
-                            componentName: 'comms-log',
-                            title: 'Communications Log',
-                        },{
-                            type: 'component',
-                            componentName: 'question-queue',
-                            title: 'Question Queue',
-                        }]
+                        content:[
+                            { type: 'component', componentName: 'comms-log', title: 'Communications Log' },
+                            { type: 'component', componentName: 'question-queue', title: 'Question Queue' }
+                        ]
                     },{
-                        type: 'component',
-                        componentName: 'controls',
-                        title: 'Status & Controls',
+                        type: 'component', componentName: 'controls', title: 'Status & Controls',
+                    },{
+                        type: 'component', componentName: 'network-tests', title: 'Network Tests',
                     }]
                 }]
             }]
         };
-
         const layout = new GoldenLayout(config, $('#layout-container'));
 
-        // Register components
-        layout.registerComponent('network-graph', function(container, componentState){
-            container.getElement().html('<div id="network-graph-container"></div>');
+        // Register Components
+        layout.registerComponent('network-graph', function(c){ c.getElement().html('<div id="network-graph-container" style="width:100%; height:100%;"></div>'); });
+        layout.registerComponent('comms-log', function(c){ c.getElement().html('<div id="comms-log" style="overflow-y: scroll; height: 100%;"></div>'); });
+        layout.registerComponent('peer-details', function(container, componentState){
+            container.getElement().html(`<div style="padding: 10px;"><h3>Details for ${componentState.peerId}</h3><p>Data will appear here...</p></div>`);
         });
 
-        layout.registerComponent('comms-log', function(container, componentState){
-            container.getElement().html('<div id="comms-log"></div>');
-        });
-
-        layout.registerComponent('question-queue', function(container, componentState){
+        layout.registerComponent('question-queue', function(container){
             const queueElement = document.createElement('ul');
             queueElement.id = 'question-queue';
             container.getElement().append(queueElement);
 
-            queueElement.addEventListener('click', (e) => {
+            queueElement.addEventListener('click', function(e) {
                 const questionId = e.target.dataset.id;
                 if (!questionId) return;
 
@@ -151,12 +213,8 @@
                     const answer = prompt(`Answering question from ${peerId.substring(0,12)}...:\n\n${questionText}`);
 
                     if (answer) {
-                        const message = {
-                            type: 'answer',
-                            payload: { answer: answer, questionId: questionId }
-                        };
-                        // This requires a new function to send a direct message
-                        sendDirectMessage(peerId, message);
+                        const message = { type: 'answer', payload: { answer: answer, questionId: questionId } };
+                        MPLib.sendDirectToRoomPeer(peerId, message);
                         log(`Sent answer to ${peerId}`);
                         questionLi.remove();
                     }
@@ -164,19 +222,30 @@
             });
         });
 
-        layout.registerComponent('peer-details', function(container, componentState){
-            const peerId = componentState.peerId;
+        layout.registerComponent('network-tests', function(container){
             container.getElement().html(`
-                <div class="peer-details-content" style="padding:10px;" data-peer-id="${peerId}">
-                    <h3>Details for ${peerId.substring(0,12)}...</h3>
-                    <p>Data will appear here...</p>
-                    <button class="debug-btn" data-peer-id="${peerId}">Start Debug Session</button>
-                    <div class="debug-output" style="white-space: pre-wrap; height: 200px; overflow-y: scroll; background: #000; margin-top: 10px;"></div>
+                <div id="tests-content" style="padding: 10px;">
+                    <button id="direct-ping-btn">Run Direct Ping Test</button>
+                    <button id="multibroadcast-btn">Run Multibroadcast Test</button>
+                    <hr>
+                    <div id="test-results"></div>
                 </div>
             `);
+            container.on('open', function(){
+                document.getElementById('direct-ping-btn').addEventListener('click', function() {
+                    const targetPeer = prompt("Enter the Peer ID to ping:");
+                    if (!targetPeer) return;
+                    log(`Pinging ${targetPeer}...`);
+                    MPLib.sendDirectToRoomPeer(targetPeer, { type: 'ping', id: `ping-${Date.now()}` });
+                });
+                document.getElementById('multibroadcast-btn').addEventListener('click', function() {
+                    log('Broadcasting ping to all peers...');
+                    MPLib.broadcastToRoom({ type: 'ping', id: `mb-ping-${Date.now()}` });
+                });
+            });
         });
 
-        layout.registerComponent('controls', function(container, componentState){
+        layout.registerComponent('controls', function(container){
             container.getElement().html(`
                 <div id="controls-content" style="padding: 10px;">
                     <p>Status: <span id="status">Initializing...</span></p>
@@ -187,473 +256,87 @@
                     <p>Key Status: <span id="key-status" style="color: #ff6b6b;">Not Loaded</span></p>
                     <hr>
                     <p><b>Messaging</b></p>
-                    <textarea id="message-input" placeholder="Type message..." style="width: 95%; height: 60px;"></textarea>
+                    <textarea id="message-input" placeholder="Type message..."></textarea>
                     <button id="send-broadcast">Send to All</button>
                 </div>
             `);
-
-            container.on('open', () => {
-                const sendButton = document.getElementById('send-broadcast');
-                const keyFile = document.getElementById('privateKeyFile');
-                sendButton.disabled = true;
-
-                keyFile.addEventListener('change', (event) => {
+            container.on('open', function() {
+                document.getElementById('privateKeyFile').addEventListener('change', function(event) {
                     const file = event.target.files[0];
                     if (!file) return;
                     const reader = new FileReader();
-                    reader.onload = (e) => {
+                    reader.onload = function(e) {
                         creatorPrivateKey = e.target.result;
                         log('Private key loaded successfully.');
                         document.getElementById('key-status').textContent = 'Loaded';
                         document.getElementById('key-status').style.color = 'var(--font-color)';
-                        sendButton.disabled = false;
                     };
                     reader.readAsText(file);
                 });
+                document.getElementById('send-broadcast').addEventListener('click', function() {
+                    const commandText = document.getElementById('message-input').value;
+                    if (!commandText || !creatorPrivateKey) {
+                        log('Cannot send: Missing message or private key.');
+                        return;
+                    }
+                    const sig = new KJUR.crypto.Signature({"alg": "SHA256withRSA"});
+                    sig.init(creatorPrivateKey);
+                    sig.updateString(commandText);
+                    const signature = sig.sign();
+                    const message = { type: 'creator-command', payload: { command: commandText, signature: signature } };
+                    MPLib.broadcastToRoom({ type: 'encrypted-message', payload: MPLib.encrypt(JSON.stringify(message)) });
+                    log(`Sent encrypted and signed command: ${commandText}`);
+                    document.getElementById('message-input').value = '';
+                });
+            });
+        });
 
-                sendButton.addEventListener('click', sendCommand);
+        layout.on('initialised', function() {
+            initializeGraph();
+
+            MPLib.initialize({
+                onStatusUpdate: function(msg, type) {
+                    if (type === 'status') {
+                        document.getElementById('status').textContent = msg;
+                        if (msg === 'Lobby Host' || msg === 'Connected to lobby') {
+                            addNode(MPLib.getLocalPeerId());
+                        }
+                    }
+                    const peerIdEl = document.getElementById('peer-id');
+                    if (peerIdEl) peerIdEl.textContent = MPLib.getLocalPeerId() || 'N/A';
+                    log(`Network Status: ${msg}`);
+                },
+                onError: function(type, err) { log(`Network Error (${type}): ${err.message}`); },
+                onConnectionChange: function(count) {
+                    log(`Direct connections: ${count}`);
+                    MPLib.getDirectConnections().forEach(addNode);
+                },
+                onRoomDataReceived: function(peerId, data) {
+                    log(`Received message from ${peerId}: type=${data.type}`);
+                    if (data.type === 'pong') {
+                        log(`Pong received from ${peerId} for test ID ${data.id}`);
+                        document.getElementById('test-results').innerHTML += `<div>Pong from ${peerId} (Test ID: ${data.id})</div>`;
+                    } else if (data.type === 'question') {
+                        const queue = document.getElementById('question-queue');
+                        if (queue) {
+                            const li = document.createElement('li');
+                            li.id = `question-${data.id}`;
+                            li.innerHTML = `
+                                <p style="margin-bottom: 5px;"><strong>From:</strong> ${peerId.substring(0,12)}...</p>
+                                <p style="margin-left: 10px; margin-top: 0;">${data.question}</p>
+                                <div style="text-align: right;">
+                                    <button class="answer-btn" data-id="${data.id}" data-from="${peerId}">Answer</button>
+                                    <button class="delete-btn" data-id="${data.id}">Delete</button>
+                                </div>
+                                <hr>`;
+                            queue.appendChild(li);
+                        }
+                    }
+                }
             });
         });
 
         layout.init();
-
-        function sendCommand() {
-            const commandText = document.getElementById('message-input').value;
-            if (!commandText) {
-                log('Cannot send empty message.');
-                return;
-            }
-            if (!creatorPrivateKey) {
-                log('Private key not loaded. Cannot send command.');
-                return;
-            }
-
-            // Encrypt the command
-            const encryptedCommand = encrypt(commandText);
-
-            // Create signature for the encrypted content
-            const sig = new KJUR.crypto.Signature({"alg": "SHA256withRSA"});
-            sig.init(creatorPrivateKey);
-            sig.updateString(encryptedCommand);
-            const signature = sig.sign();
-
-            const message = {
-                type: 'creator-command',
-                payload: {
-                    encryptedCommand: encryptedCommand,
-                    signature: signature
-                }
-            };
-
-            log(`Sending command: ${commandText}`);
-            if (isHost) {
-                // If we are the host, broadcast directly to all clients
-                broadcast(message);
-                // Also log it for ourself
-                log(`Creator Command Sent: ${commandText}`);
-            } else if (connections.has(LOBBY_ID)) {
-                // If we are a client, send to the lobby to be broadcast
-                connections.get(LOBBY_ID).send(message);
-            } else {
-                log('Error: Not connected to the network.');
-            }
-            document.getElementById('message-input').value = ''; // Clear input
-        }
-
-        // --- Crypto Logic ---
-        const SHARED_SECRET = 'a-very-secret-key-that-should-be-exchanged-securely';
-
-        function encrypt(text) {
-            return CryptoJS.AES.encrypt(text, SHARED_SECRET).toString();
-        }
-
-        function decrypt(ciphertext) {
-            const bytes = CryptoJS.AES.decrypt(ciphertext, SHARED_SECRET);
-            return bytes.toString(CryptoJS.enc.Utf8);
-        }
-
-
-        // --- PeerJS Logic ---
-        const LOBBY_ID = 'borg-lobby';
-        let peer = null;
-        let creatorPrivateKey = null;
-        let localPeerId = null;
-        let isHost = false;
-        const connections = new Map();
-
-        function log(message) {
-            const commsLog = document.getElementById('comms-log');
-            if (commsLog) {
-                commsLog.innerHTML += `<div>${new Date().toLocaleTimeString()}: ${message}</div>`;
-                commsLog.scrollTop = commsLog.scrollHeight;
-            }
-            console.log(message);
-        }
-
-        function updateStatus(status) {
-            const statusEl = document.getElementById('status');
-            if (statusEl) statusEl.textContent = status;
-        }
-
-        function updatePeerId(id) {
-            const peerIdEl = document.getElementById('peer-id');
-            if (peerIdEl) peerIdEl.textContent = id;
-        }
-
-        function initializePeer() {
-            log('Attempting to become the lobby host...');
-            peer = new Peer(LOBBY_ID);
-
-            peer.on('open', id => {
-                isHost = true;
-                localPeerId = id;
-                updateStatus('Lobby Host');
-                updatePeerId(id);
-                log(`Successfully became the lobby host with ID: ${id}`);
-                setupHostListeners();
-            });
-
-            peer.on('error', err => {
-                if (err.type === 'unavailable-id') {
-                    log('Lobby host already exists. Connecting as a client...');
-                    peer.destroy();
-                    connectAsClient();
-                } else {
-                    log(`A critical PeerJS error occurred: ${err.message}`);
-                    updateStatus(`Error: ${err.message}`);
-                }
-            });
-        }
-
-        function connectAsClient() {
-            peer = new Peer(); // Random ID
-
-            peer.on('open', id => {
-                localPeerId = id;
-                updatePeerId(id);
-                log(`My Peer ID is ${id}. Connecting to lobby...`);
-                connectToLobby();
-            });
-
-             peer.on('error', err => {
-                log(`A critical PeerJS error occurred as a client: ${err.message}`);
-                updateStatus(`Error: ${err.message}`);
-            });
-        }
-
-        function setupHostListeners() {
-            log('Lobby is online. Waiting for connections...');
-            addNode(localPeerId); // Add self to graph
-
-            peer.on('connection', conn => {
-                log(`Incoming connection from ${conn.peer}`);
-
-                // Tell the new peer about everyone already connected
-                const existingPeers = Array.from(connections.keys());
-                conn.on('open', () => {
-                    conn.send({type: 'welcome', peers: existingPeers});
-                });
-
-                // Tell everyone else about the new peer
-                broadcast({type: 'peer-connect', peerId: conn.peer}, conn.peer);
-
-                connections.set(conn.peer, conn);
-                addNode(conn.peer);
-                addEdge(localPeerId, conn.peer);
-
-                conn.on('data', data => {
-                    log(`Received data from ${conn.peer}, broadcasting...`);
-                    // Re-broadcast to all other peers
-                    broadcast(data, conn.peer);
-                    // Also process it for the host
-                    switch(data.type) {
-                        case 'creator-command': {
-                            const decryptedCommand = decrypt(data.payload.encryptedCommand);
-                            log(`<b>Creator Command Received:</b> ${decryptedCommand}`);
-                            break;
-                        }
-                        case 'question':
-                            handleQuestion(data.payload);
-                            break;
-                        case 'debug-log': {
-                            const { from, log: logMessage } = data.payload;
-                            const debugOutput = document.querySelector(`.peer-details-content[data-peer-id="${from}"] .debug-output`);
-                            if (debugOutput) {
-                                debugOutput.innerHTML += `<div>${logMessage}</div>`;
-                                debugOutput.scrollTop = debugOutput.scrollHeight;
-                            }
-                            break;
-                        }
-                        case 'data-response': {
-                            const { from, data: responseData } = data.payload;
-                            log(`Received data from ${from}: ${JSON.stringify(responseData)}`);
-                            break;
-                        }
-                        case 'relay-direct-message': {
-                            const { to, data: relayedData } = data.payload;
-                            const targetConn = connections.get(to);
-                            if (targetConn && targetConn.open) {
-                                targetConn.send(relayedData);
-                                log(`Relayed message from ${conn.peer} to ${to}`);
-                            } else {
-                                log(`Could not relay message: target ${to} not found.`);
-                            }
-                            break;
-                        }
-                    }
-                });
-
-                conn.on('close', () => {
-                    log(`Connection from ${conn.peer} closed.`);
-                    connections.delete(conn.peer);
-                    removeNode(conn.peer);
-                    // Tell everyone the peer left
-                    broadcast({type: 'peer-disconnect', peerId: conn.peer});
-                });
-            });
-        }
-
-        function broadcast(data, originatorPeerId = null) {
-            for (const [peerId, connection] of connections.entries()) {
-                if (peerId !== originatorPeerId && connection.open) {
-                    connection.send(data);
-                }
-            }
-        }
-
-        function sendDirectMessage(peerId, data) {
-            if (isHost) {
-                const conn = connections.get(peerId);
-                if (conn && conn.open) {
-                    conn.send(data);
-                } else {
-                    log(`Error: Could not send direct message to ${peerId}. Connection not found.`);
-                }
-            } else {
-                // As a client, all messages must be relayed by the host
-                const lobbyConn = connections.get(LOBBY_ID);
-                if (lobbyConn && lobbyConn.open) {
-                    lobbyConn.send({
-                        type: 'relay-direct-message',
-                        payload: {
-                            to: peerId,
-                            data: data
-                        }
-                    });
-                } else {
-                    log('Error: Not connected to lobby, cannot send direct message.');
-                }
-            }
-        }
-
-        function connectToLobby() {
-            log(`Attempting to connect to lobby: ${LOBBY_ID}`);
-            updateStatus('Connecting to lobby...');
-
-            const lobbyConnection = peer.connect(LOBBY_ID, { reliable: true });
-
-            lobbyConnection.on('open', () => {
-                updateStatus('Connected to lobby');
-                log('Connection to lobby established.');
-                connections.set(LOBBY_ID, lobbyConnection);
-                addNode(localPeerId);
-                addNode(LOBBY_ID);
-                addEdge(localPeerId, LOBBY_ID);
-            });
-
-            lobbyConnection.on('data', data => {
-                log(`Received broadcast from lobby: ${JSON.stringify(data)}`);
-                switch (data.type) {
-                    case 'welcome':
-                        // Host told us who is already here
-                        data.peers.forEach(peerId => {
-                            addNode(peerId);
-                            addEdge(LOBBY_ID, peerId);
-                        });
-                        break;
-                    case 'peer-connect':
-                        log(`Peer ${data.peerId} connected.`);
-                        addNode(data.peerId);
-                        addEdge(LOBBY_ID, data.peerId);
-                        break;
-                    case 'peer-disconnect':
-                        log(`Peer ${data.peerId} disconnected.`);
-                        removeNode(data.peerId);
-                        break;
-                    case 'creator-command': {
-                        const decryptedCommand = decrypt(data.payload.encryptedCommand);
-                        log(`<b>Creator Command Received:</b> ${decryptedCommand}`);
-                        break;
-                    }
-                    case 'question':
-                        handleQuestion(data.payload);
-                        break;
-                    case 'debug-log': {
-                        const { from, log: logMessage } = data.payload;
-                        const debugOutput = document.querySelector(`.peer-details-content[data-peer-id="${from}"] .debug-output`);
-                        if (debugOutput) {
-                            debugOutput.innerHTML += `<div>${logMessage}</div>`;
-                            debugOutput.scrollTop = debugOutput.scrollHeight;
-                        }
-                        break;
-                    }
-                    case 'data-response': {
-                        const { from, data: responseData } = data.payload;
-                        log(`Received data from ${from}: ${JSON.stringify(responseData)}`);
-                        break;
-                    }
-                }
-            });
-
-            lobbyConnection.on('close', () => {
-                log('Connection to lobby closed.');
-                updateStatus('Disconnected from lobby.');
-                connections.delete(LOBBY_ID);
-                removeNode(LOBBY_ID);
-                removeNode(localPeerId);
-            });
-        }
-
-        // --- Cytoscape Graph Logic ---
-        let cy = null;
-
-        function initializeGraph() {
-            log('Initializing network graph...');
-            const graphContainer = document.getElementById('network-graph-container');
-            if (!graphContainer) {
-                log('Error: Graph container not found!');
-                return;
-            }
-            cy = cytoscape({
-                container: graphContainer,
-                style: [
-                    {
-                        selector: 'node',
-                        style: {
-                            'background-color': 'var(--font-color)',
-                            'label': 'data(id)',
-                            'color': 'var(--font-color)',
-                            'text-valign': 'bottom',
-                            'text-halign': 'center',
-                            'font-size': '12px',
-                            'text-outline-color': 'var(--background-color)',
-                            'text-outline-width': 2
-                        }
-                    },
-                    {
-                        selector: 'edge',
-                        style: {
-                            'width': 2,
-                            'line-color': 'var(--border-color)',
-                            'target-arrow-color': 'var(--border-color)',
-                            'target-arrow-shape': 'triangle',
-                            'curve-style': 'bezier'
-                        }
-                    }
-                ],
-                layout: {
-                    name: 'cose',
-                    animate: true,
-                    idealEdgeLength: 100,
-                    nodeOverlap: 20,
-                    refresh: 20,
-                    fit: true,
-                    padding: 30,
-                }
-            });
-            log('Network graph initialized.');
-            setupGraphListeners();
-        }
-
-        function addNode(id) {
-            if (cy && cy.getElementById(id).empty()) {
-                cy.add({ group: 'nodes', data: { id: id } });
-                cy.layout({ name: 'cose', animate: true }).run();
-            }
-        }
-
-        function removeNode(id) {
-            if (cy) {
-                cy.getElementById(id).remove();
-            }
-        }
-
-        function addEdge(source, target) {
-            if (cy && cy.getElementById(`${source}-${target}`).empty()) {
-                cy.add({ group: 'edges', data: { id: `${source}-${target}`, source: source, target: target } });
-            }
-        }
-
-        function handleQuestion(payload) {
-            const { from, question, id } = payload;
-            log(`Received question from ${from}: "${question}"`);
-            const queue = document.getElementById('question-queue');
-            if (queue) {
-                const li = document.createElement('li');
-                li.id = `question-${id}`;
-                li.innerHTML = `
-                    <p style="margin-bottom: 5px;"><strong>From:</strong> ${from.substring(0,12)}...</p>
-                    <p style="margin-left: 10px; margin-top: 0;">${question}</p>
-                    <div style="text-align: right;">
-                        <button class="answer-btn" data-id="${id}" data-from="${from}">Answer</button>
-                        <button class="delete-btn" data-id="${id}">Delete</button>
-                    </div>
-                    <hr style="border-color: var(--border-color); opacity: 0.3;">
-                `;
-                queue.appendChild(li);
-            }
-        }
-
-        function setupGraphListeners() {
-            cy.on('tap', 'node', function(evt){
-                const node = evt.target;
-                log(`Clicked on peer: ${node.id()}`);
-
-                const newItemConfig = {
-                    type: 'component',
-                    componentName: 'peer-details',
-                    title: `Details: ${node.id().substring(0, 12)}...`,
-                    componentState: { peerId: node.id() }
-                };
-
-                // Add to the main stack if it exists
-                if (layout.root.contentItems[0] && layout.root.contentItems[0].contentItems[1]) {
-                     layout.root.contentItems[0].contentItems[1].contentItems[0].addChild(newItemConfig);
-                } else {
-                    layout.root.addChild(newItemConfig);
-                }
-            });
-        }
-
-        // Initialize on load
-        initializePeer();
-        layout.on('initialised', initializeGraph);
-
-        document.getElementById('layout-container').addEventListener('click', (e) => {
-            if (e.target.classList.contains('debug-btn')) {
-                const peerId = e.target.dataset.peerId;
-                log(`Requesting debug stream from ${peerId}`);
-                sendDirectMessage(peerId, { type: 'start-debug' });
-                e.target.disabled = true;
-                e.target.textContent = 'Debug Stream Active';
-            }
-        });
-
-        // Keep-alive ping
-        setInterval(() => {
-            if (isHost) {
-                broadcast({ type: 'ping' });
-            } else if (connections.has(LOBBY_ID)) {
-                connections.get(LOBBY_ID).send({ type: 'ping' });
-            }
-        }, 10000); // every 10 seconds
-
-        // Periodic Data Sweep
-        setInterval(() => {
-            log('Requesting data sweep from all peers...');
-            broadcast({ type: 'request-data' });
-        }, 60000); // every 60 seconds
-
     </script>
 </body>
 </html>

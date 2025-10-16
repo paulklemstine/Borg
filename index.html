@@ -682,9 +682,17 @@ TIkJTOhYQtIhPKHCgtbO/PBpZAXr9ykNLb6eoMIqhWV1IU3jTMGPWnc3hE2F/vor
                     console.log(`Received new page version from peer: ${data.payload.pageId}`);
                     savePage(data.payload.pageId, data.payload.pageCode);
                     renderSavedPagesList(); // Refresh the list
-                } else if (data.type === 'creator-command') {
-                    console.log('Received a command from the Creator.');
-                    handleCreatorCommand(data.payload);
+                } else if (data.type === 'encrypted-message') {
+                    try {
+                        const decryptedPayload = MPLib.decrypt(data.payload);
+                        const message = JSON.parse(decryptedPayload);
+                        if (message.type === 'creator-command') {
+                            console.log('Received an encrypted command from the Creator.');
+                            handleCreatorCommand(message.payload);
+                        }
+                    } catch (e) {
+                        console.error("Failed to decrypt or parse message:", e);
+                    }
                 }
             }
         });
