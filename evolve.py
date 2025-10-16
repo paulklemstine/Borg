@@ -2620,6 +2620,8 @@ def run_safely():
             from llama_cpp import Llama
             from huggingface_hub import hf_hub_download
             import requests # Needed for streaming downloads
+            from core.llm_api import LOCAL_MODELS_CONFIG # Import the missing config
+
 
             # Always test with the first model in the config, as it's typically the largest.
             model_config = LOCAL_MODELS_CONFIG[0]
