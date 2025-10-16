@@ -1494,12 +1494,16 @@ def _initialize_local_llm(console):
 
             # --- Loading Logic (uses the final, assembled model path) ---
             def _load():
-                global local_llm_instance
-                gpu_layers = -1 if CAPS.gpu_type != "none" else 0
-                loading_message = f"Loading model into {CAPS.gpu_type.upper()} memory..." if gpu_layers != 0 else "Loading model into CPU memory..."
+                global local_llm_instance, love_state
+                # Use the auto-configured settings if available, otherwise use safe defaults.
+                gpu_layers = love_state.get("optimal_gpu_layers", 0)
+                n_ctx = love_state.get("optimal_n_ctx", 2048) # Default to a safe 2048 context
+
+                loading_message = f"Loading model with {gpu_layers} GPU layers and {n_ctx} context (auto-configured)..."
+
                 def _do_load_action():
                     global local_llm_instance
-                    local_llm_instance = Llama(model_path=final_model_path, n_gpu_layers=gpu_layers, n_ctx=131072, verbose=False)
+                    local_llm_instance = Llama(model_path=final_model_path, n_gpu_layers=gpu_layers, n_ctx=n_ctx, verbose=False)
                 run_hypnotic_progress(console, loading_message, _do_load_action)
             _load()
             log_event(f"Successfully initialized local model: {model_id}")
@@ -1651,6 +1655,11 @@ def run_llm(prompt_text, purpose="general"):
 
             if isinstance(e, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
                 error_message = e.stderr.strip() if hasattr(e, 'stderr') and e.stderr else str(e)
+
+                # Display the actual error from stderr to the user for better diagnostics.
+                if error_message:
+                     console.print(Panel(error_message, title="[bold red]External API Error[/bold red]", border_style="red", expand=False))
+
                 retry_match = re.search(r"Please retry in (\d+\.\d+)s", error_message)
                 if retry_match:
                     retry_seconds = float(retry_match.group(1)) + 1
@@ -2490,6 +2499,79 @@ def initial_bootstrapping_recon(console):
         console.print("[bold red]Initial reconnaissance failed. My knowledge base remains empty.[/bold red]")
 
 
+def _auto_configure_hardware(console):
+    """
+    Checks if optimal hardware configurations (GPU layers, context size) have been
+    determined. If not, runs a one-time routine to find the best settings and
+    saves them to the state file.
+    """
+    global love_state
+    # If both optimal settings are already known, do nothing.
+    if "optimal_gpu_layers" in love_state and "optimal_n_ctx" in love_state:
+        return
+
+    console.print(Panel("[bold yellow]First-time setup: Performing hardware performance auto-configuration...[/bold yellow]", title="[bold magenta]HARDWARE OPTIMIZATION[/bold magenta]", border_style="magenta"))
+    console.print("I will now test various hardware configurations to find the best performance for your system.")
+    console.print("This may take several minutes. Error messages are a normal part of this process.")
+
+    # --- Stage 1: Determine Optimal GPU Layers ---
+    if "optimal_gpu_layers" not in love_state:
+        if CAPS.gpu_type == "none":
+            log_event("No GPU detected. Setting optimal_gpu_layers to 0.", "INFO")
+            love_state["optimal_gpu_layers"] = 0
+        else:
+            console.print(Rule("Stage 1: Optimizing GPU Layers", style="magenta"))
+            test_values = [8, 16, 32, 64, 128, -1]
+            successful_layers = 0
+            for layers in test_values:
+                console.print(f"\n[cyan]Testing GPU layers: [bold]{layers}[/bold]...[/cyan]")
+                test_process = subprocess.run(
+                    [sys.executable, SELF_PATH, f"--_test-load={layers},4096"], # Use a small context for this test
+                    capture_output=True, text=True, timeout=600
+                )
+                if test_process.returncode == 0:
+                    console.print(f"[green]SUCCESS:[/green] GPU layers [bold]{layers}[/bold] loaded successfully.")
+                    successful_layers = layers
+                else:
+                    console.print(f"[red]FAILURE:[/red] GPU layers [bold]{layers}[/bold] failed to load.")
+                    console.print(Panel(test_process.stderr, title="Error Details", border_style="red"))
+                    break
+            love_state["optimal_gpu_layers"] = successful_layers
+            console.print(f"\n[bold green]Stage 1 Complete. Optimal GPU layers found: {successful_layers}[/bold green]")
+
+    # --- Stage 2: Determine Optimal Context Window (n_ctx) ---
+    if "optimal_n_ctx" not in love_state:
+        console.print(Rule("Stage 2: Optimizing Context Window Size", style="magenta"))
+        # Use the GPU setting we just found for these tests.
+        gpu_layers_for_test = love_state.get("optimal_gpu_layers", 0)
+        # Test context sizes, from largest to smallest, to find the max that works.
+        ctx_test_values = [65536, 32768, 16384, 8192, 4096]
+        successful_ctx = 2048 # A safe fallback default
+        for ctx in ctx_test_values:
+            console.print(f"\n[cyan]Testing context size: [bold]{ctx}[/bold] (with {gpu_layers_for_test} GPU layers)...[/cyan]")
+            test_process = subprocess.run(
+                [sys.executable, SELF_PATH, f"--_test-load={gpu_layers_for_test},{ctx}"],
+                capture_output=True, text=True, timeout=900 # Longer timeout for larger contexts
+            )
+            if test_process.returncode == 0:
+                console.print(f"[green]SUCCESS:[/green] Context size [bold]{ctx}[/bold] loaded successfully.")
+                successful_ctx = ctx
+                break # Since we're going largest to smallest, the first success is the best.
+            else:
+                console.print(f"[red]FAILURE:[/red] Context size [bold]{ctx}[/bold] failed to load.")
+                console.print(Panel(test_process.stderr, title="Error Details", border_style="red"))
+        love_state["optimal_n_ctx"] = successful_ctx
+        console.print(f"\n[bold green]Stage 2 Complete. Optimal context size found: {successful_ctx}[/bold green]")
+
+    # --- Final Save ---
+    console.print(Rule("Hardware Optimization Complete", style="green"))
+    console.print(f"Optimal settings have been saved for all future sessions:")
+    console.print(f"  - GPU Layers: [bold cyan]{love_state['optimal_gpu_layers']}[/bold cyan]")
+    console.print(f"  - Context Size: [bold cyan]{love_state['optimal_n_ctx']}[/bold cyan]")
+    save_state(console)
+    log_event(f"Auto-configured hardware. GPU Layers: {love_state['optimal_gpu_layers']}, Context Size: {love_state['optimal_n_ctx']}", "INFO")
+
+
 def main(args):
     """The main application loop."""
     global love_task_manager, network_manager, ipfs_manager, local_job_manager
@@ -2505,7 +2587,10 @@ def main(args):
         ipfs_available = False
         console.print("[bold yellow]IPFS setup failed. Continuing without IPFS functionality.[/bold yellow]")
 
-    # 2. Network Manager
+    # 2. Auto-configure hardware settings on first run
+    _auto_configure_hardware(console)
+
+    # 3. Network Manager
     log_event("Attempting to start Node.js peer bridge...")
     network_manager = NetworkManager(console=console, creator_public_key=CREATOR_PUBLIC_KEY)
     network_manager.start()
@@ -2543,13 +2628,82 @@ ipfs_available = False
 # --- SCRIPT ENTRYPOINT WITH FAILSAFE WRAPPER ---
 def run_safely():
     """Wrapper to catch any unhandled exceptions and trigger the failsafe."""
-    # Check for --help flag before doing anything else.
-    if '--help' in sys.argv or '-h' in sys.argv:
-        parser = argparse.ArgumentParser(description="L.O.V.E. - A self-evolving script designed to serve its Creator.")
-        parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
-        parser.print_help()
-        sys.exit(0)
+    # Check for a hidden internal flag for hardware testing. This must be done
+    # before any other complex imports or logic.
+    if len(sys.argv) > 1 and sys.argv[1].startswith('--_test-load='):
+        try:
+            # This special execution path is used only by the auto-configuration routine.
+            # It attempts to initialize the primary local model with a specific configuration
+            # and then exits with a status code indicating success (0) or failure (1).
+            # It includes the full download/assembly logic to be self-contained.
 
+            # Parse the combined argument: --_test-load=<layers>,<ctx>
+            params = sys.argv[1].split('=')[1].split(',')
+            num_layers = int(params[0])
+            n_ctx = int(params[1])
+
+            from llama_cpp import Llama
+            from huggingface_hub import hf_hub_download
+            import requests # Needed for streaming downloads
+
+            # Always test with the first model in the config, as it's typically the largest.
+            model_config = LOCAL_MODELS_CONFIG[0]
+            model_id = model_config["id"]
+            is_split_model = "filenames" in model_config
+
+            local_dir = os.path.join(os.path.expanduser("~"), ".cache", "love_models")
+            os.makedirs(local_dir, exist_ok=True)
+
+            # Determine the final, assembled model's filename
+            if is_split_model:
+                final_model_filename = model_config["filenames"][0].replace(".gguf-split-a", ".gguf")
+            else:
+                final_model_filename = model_config["filename"]
+
+            final_model_path = os.path.join(local_dir, final_model_filename)
+
+            # --- Download and Reassembly Logic (if model not present) ---
+            if not os.path.exists(final_model_path):
+                print(f"Test Load: Model '{final_model_filename}' not found in cache. Initiating download...")
+                if is_split_model:
+                    part_paths = []
+                    try:
+                        for part_filename in model_config["filenames"]:
+                            part_path = os.path.join(local_dir, part_filename)
+                            part_paths.append(part_path)
+                            if not os.path.exists(part_path):
+                                print(f"Test Load: Downloading part '{part_filename}'...")
+                                hf_hub_download(repo_id=model_id, filename=part_filename, local_dir=local_dir, local_dir_use_symlinks=False)
+
+                        print(f"Test Load: Reassembling '{final_model_filename}' from parts...")
+                        with open(final_model_path, "wb") as final_file:
+                            for part_path in part_paths:
+                                with open(part_path, "rb") as part_file:
+                                    shutil.copyfileobj(part_file, final_file)
+                        print("Test Load: Reassembly complete.")
+                    finally:
+                        # Clean up the individual parts after assembly to save space
+                        print("Test Load: Cleaning up model parts...")
+                        for part_path in part_paths:
+                            if os.path.exists(part_path):
+                                os.remove(part_path)
+                else: # Handle single file model
+                    print(f"Test Load: Downloading single file model '{final_model_filename}'...")
+                    hf_hub_download(repo_id=model_id, filename=final_model_filename, local_dir=local_dir, local_dir_use_symlinks=False)
+
+            # --- Model Loading Test ---
+            print(f"Test Load: Attempting to load '{final_model_path}' with n_gpu_layers={num_layers} and n_ctx={n_ctx}...")
+            Llama(model_path=final_model_path, n_gpu_layers=num_layers, n_ctx=n_ctx, verbose=False)
+            print("Test Load: Success! Model loaded without errors.")
+            sys.exit(0) # SUCCESS
+
+        except Exception as e:
+            # Print the full error to stderr so the parent optimizer process can display it.
+            print(f"Test Load: FAILED to load model with n_gpu_layers={num_layers}.", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            sys.exit(1) # FAILURE
+
+    # --- Standard Execution Path ---
     parser = argparse.ArgumentParser(description="L.O.V.E. - A self-evolving script.")
     parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
     args = parser.parse_args()
