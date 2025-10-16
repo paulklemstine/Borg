@@ -267,8 +267,11 @@ from rich.rule import Rule
 from rich.live import Live
 from rich.layout import Layout
 
-from core.llm_api import run_llm, LOCAL_MODELS_CONFIG, GEMINI_MODELS
+from core.llm_api import run_llm, LOCAL_MODELS_CONFIG, GEMINI_MODELS, LLM_AVAILABILITY as api_llm_availability
 from display import create_tamagotchi_panel, create_llm_panel, create_command_panel, create_file_op_panel, create_network_panel
+
+# Initialize evolve.py's global LLM_AVAILABILITY with the one from the API module
+LLM_AVAILABILITY = api_llm_availability
 from bbs import BBS_ART, scrolling_text, flash_text, run_hypnotic_progress, clear_screen, glitchy_text
 from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price
 from exploitation import ExploitationManager
