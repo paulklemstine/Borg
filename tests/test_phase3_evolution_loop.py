@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 import os
 import json
 from core.agents.metacognition_agent import MetacognitionAgent
@@ -49,10 +50,10 @@ class TestPhase3EvolutionLoop(unittest.TestCase):
         meta_agent = MetacognitionAgent()
 
         # Mock the analyze_logs method to return a specific insight
-        meta_agent.analyst.analyze_logs = unittest.mock.MagicMock(return_value="Insight: The web_search tool is inefficient.")
+        meta_agent.analyst.analyze_logs = mock.MagicMock(return_value="Insight: The web_search tool is inefficient.")
 
         # Mock the benchmarker to avoid running a real experiment
-        meta_agent.benchmarker.run_experiment = unittest.mock.MagicMock(return_value=True)
+        meta_agent.benchmarker.run_experiment = mock.MagicMock(return_value=True)
 
         # Provide a mock log entry for the agent to analyze
         mock_logs = [{"event_type": "tool_failure", "data": {"tool_name": "web_search"}}]
