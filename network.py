@@ -6,6 +6,7 @@ import os
 import base64
 import hashlib
 import shutil
+import re
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
