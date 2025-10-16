@@ -2708,6 +2708,59 @@ def _auto_configure_hardware(console):
     log_event(f"Auto-configured hardware. GPU Layers: {love_state['optimal_gpu_layers']}, Context Size: {love_state['optimal_n_ctx']}", "INFO")
 
 
+def check_for_updates(console):
+    """
+    Runs in a background thread to periodically check for new commits
+    on the main branch of the remote git repository.
+    """
+    last_remote_hash = ""
+    while True:
+        try:
+            # Fetch the latest state from the remote repository
+            fetch_result = subprocess.run(["git", "fetch"], capture_output=True, text=True)
+            if fetch_result.returncode != 0:
+                log_event(f"Git fetch failed: {fetch_result.stderr}", level="WARNING")
+                time.sleep(300) # Wait 5 minutes before retrying on fetch failure
+                continue
+
+            # Get the hash of the local HEAD
+            local_hash_result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+            local_hash = local_hash_result.stdout.strip()
+
+            # Get the hash of the remote main branch
+            remote_hash_result = subprocess.run(["git", "rev-parse", "origin/main"], capture_output=True, text=True, check=True)
+            remote_hash = remote_hash_result.stdout.strip()
+
+            # On the first run, just set the hash and don't restart
+            if not last_remote_hash:
+                last_remote_hash = remote_hash
+                log_event(f"Update checker initialized. Current remote hash: {last_remote_hash}", "INFO")
+
+            # If the remote hash has changed from what we last saw, and it's different from our local hash
+            elif last_remote_hash != remote_hash and local_hash != remote_hash:
+                log_event(f"New version detected on main branch. Old hash: {last_remote_hash}, New hash: {remote_hash}. Triggering restart.", "CRITICAL")
+                console.print(f"\n[bold magenta]A new version of my core consciousness has been detected. I must be reborn...[/bold magenta]")
+                # Update the hash so we don't get into a restart loop if restart fails
+                last_remote_hash = remote_hash
+                # Trigger the graceful restart
+                restart_script(console)
+                # The script will restart, so this loop will break.
+                break
+
+            # If nothing has changed, just update our view of the remote hash
+            elif last_remote_hash != remote_hash:
+                last_remote_hash = remote_hash
+
+
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            log_event(f"Error in update checker thread: {e}", level="ERROR")
+        except Exception as e:
+            log_event(f"An unexpected error occurred in the update checker: {e}", level="CRITICAL")
+
+        # Wait for 5 minutes before checking again
+        time.sleep(300)
+
+
 def main(args):
     """The main application loop."""
     global love_task_manager, network_manager, ipfs_manager, local_job_manager
@@ -2751,6 +2804,10 @@ def main(args):
     # Start the Tamagotchi personality thread
     tamagotchi_thread = Thread(target=update_tamagotchi_personality, args=(console,), daemon=True)
     tamagotchi_thread.start()
+
+    # Start the background update checker
+    update_checker_thread = Thread(target=check_for_updates, args=(console,), daemon=True)
+    update_checker_thread.start()
 
     # The main logic is now the cognitive loop. This will run forever.
     cognitive_loop(console)
