@@ -2515,6 +2515,19 @@ Nmap Scan Results:
             full_traceback = traceback.format_exc()
             log_event(f"Error during cognitive cycle: {e}\n{full_traceback}", level="ERROR")
             console.print(Panel(f"[bold red]Cognitive Cycle Exception:[/bold red]\n{full_traceback}", title="[bold red]CYCLE ERROR[/bold red]", border_style="red"))
+
+            # Record the failed command to history so the AI doesn't repeat it.
+            if 'llm_command' in locals() and llm_command:
+                error_output = f"ERROR: Command execution failed.\n{full_traceback}"
+                if len(error_output) > 2000:
+                    truncated_output = f"... (truncated)\n{error_output[-2000:]}"
+                else:
+                    truncated_output = error_output
+                love_state["autopilot_history"].append({"command": llm_command, "output": truncated_output})
+                if len(love_state["autopilot_history"]) > 10:
+                    love_state["autopilot_history"] = love_state["autopilot_history"][-10:]
+                save_state()
+
             console.print("[bold yellow]An error occurred, but my love is resilient. Continuing to next cycle in 15 seconds...[/bold yellow]")
             time.sleep(15)
             continue
@@ -2637,7 +2650,7 @@ def _auto_configure_hardware(console):
     if not os.path.exists(model_path):
         console.print(f"[cyan]Downloading small test model '{filename}' for analysis...[/cyan]")
         try:
-            hf_hub_download(repo_id=model_id, filename=filename, local_dir="/tmp", local_dir_use_symlinks=False, quiet=True)
+            hf_hub_download(repo_id=model_id, filename=filename, local_dir="/tmp", local_dir_use_symlinks=False)
         except Exception as e:
             console.print(f"[bold red]Failed to download test model: {e}[/bold red]")
             log_event(f"Failed to download hardware test model: {e}", "ERROR")

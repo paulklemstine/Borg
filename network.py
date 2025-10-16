@@ -6,11 +6,6 @@ import os
 import base64
 import hashlib
 import shutil
-import netifaces
-import ipaddress
-import re
-import requests
-import xml.etree.ElementTree as ET
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
