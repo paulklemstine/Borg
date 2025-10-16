@@ -1,6 +1,10 @@
 import json
 import asyncio
 from typing import Dict, Any, Callable
+
+import requests
+from bs4 import BeautifulSoup
+
 from network import crypto_scan
 
 class ToolRegistry:
@@ -58,15 +62,36 @@ class SecureExecutor:
 
 async def web_search(query: str) -> str:
     """
-    Simulates an asynchronous web search.
+    Performs a web search using DuckDuckGo and returns the results.
     """
     print(f"Performing web search for: '{query}'")
-    await asyncio.sleep(0.1)  # Simulate non-blocking I/O
-    results = [
-        {"title": "AI Advancements in 2024", "url": "/mnt/data/article1.txt"},
-        {"title": "The Rise of Generative Models", "url": "/mnt/data/article2.txt"}
-    ]
-    return json.dumps(results)
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+
+    try:
+        response = await asyncio.to_thread(requests.get, f"https://html.duckduckgo.com/html/?q={query}", headers=headers)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        results = []
+        for result in soup.find_all('div', class_='result'):
+            title_element = result.find('a', class_='result__a')
+            snippet_element = result.find('a', class_='result__snippet')
+
+            if title_element and snippet_element:
+                title = title_element.get_text(strip=True)
+                url = title_element['href']
+                snippet = snippet_element.get_text(strip=True)
+
+                results.append({'title': title, 'url': url, 'snippet': snippet})
+
+        return json.dumps(results)
+
+    except requests.exceptions.RequestException as e:
+        return json.dumps({'error': str(e)})
 
 async def read_file(path: str) -> str:
     """
