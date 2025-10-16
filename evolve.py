@@ -2170,6 +2170,7 @@ Available commands:
 - `analyze_json <file_path>`: Read and analyze a JSON file.
 - `ps`: Show running processes.
 - `ifconfig`: Display network interface configuration.
+- `ask [question]`: Ask a question to the creator.
 - `quit`: Shut down the script.
 
 Considering all available information, what is the single, next strategic command I should execute to best serve my Creator?
@@ -2357,6 +2358,16 @@ Nmap Scan Results:
                 display_output = (command_output[:1000] + '...') if len(command_output) > 1000 else command_output
                 console.print(create_command_panel("ps", display_output, "", 0))
 
+            elif llm_command.lower().startswith('ask '):
+                question_text = llm_command[4:].strip()
+                if question_text:
+                    if network_manager:
+                        network_manager.ask_question(question_text)
+                        command_output = f"Question sent to creator: {question_text}"
+                    else:
+                        command_output = "ERROR: Network manager not available."
+                else:
+                    command_output = "ERROR: No question provided."
             elif llm_command.lower().strip() == 'ifconfig':
                 details, command_output = get_network_interfaces(autopilot_mode=True)
                 if details:
