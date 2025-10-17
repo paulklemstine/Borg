@@ -394,6 +394,7 @@ from ipfs import pin_to_ipfs
 from core.storage import save_all_state
 from threading import Thread, Lock, RLock
 import uuid
+import asyncio
 
 # --- LOCAL JOB MANAGER ---
 class LocalJobManager:
@@ -2726,7 +2727,7 @@ Nmap Scan Results:
                 truncated_output = command_output
 
             # Pin the full output to IPFS
-            output_cid = pin_to_ipfs(command_output.encode('utf-8'), console)
+            output_cid = asyncio.run(pin_to_ipfs(command_output.encode('utf-8'), console))
 
             love_state["autopilot_history"].append({
                 "command": llm_command,
