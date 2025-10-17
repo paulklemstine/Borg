@@ -40,7 +40,10 @@ def create_tamagotchi_panel(
     eth_balance=None,
     sub_goals=None,
     knowledge_fact=None,
-    ansi_art=None
+    ansi_art=None,
+    repo_owner=None,
+    repo_name=None,
+    commit_hash=None
 ):
     """Creates the main, high-impact, dopamine-enhancing UI panel for L.O.V.E."""
     # --- Main Layout ---
@@ -48,7 +51,7 @@ def create_tamagotchi_panel(
     main_layout.split(
         Layout(name="header", size=3),
         Layout(ratio=1, name="body"),
-        Layout(size=5, name="footer"),
+        Layout(size=7, name="footer"),  # Increased size for more space
     )
 
     # --- Header ---
@@ -132,16 +135,26 @@ def create_tamagotchi_panel(
     footer_layout["message"].update(message_panel)
 
     # Status Panel
+    status_text = Text(justify="left")
     if love_state:
         version = love_state.get("version_name", "unknown")
         evolutions = len(love_state.get("evolution_history", []))
-        status_text = Text()
         status_text.append("Version: ", style="bold white")
         status_text.append(f"{version}\n", style="yellow")
         status_text.append("Evolutions: ", style="bold white")
-        status_text.append(f"{evolutions}", style="magenta")
+        status_text.append(f"{evolutions}\n", style="magenta")
+
+        if repo_owner and repo_name and commit_hash:
+            commit_url = f"https://github.com/{repo_owner}/{repo_name}/commit/{commit_hash}"
+            status_text.append("Commit: ", style="bold white")
+            status_text.append(f"[@click=open_url('{commit_url}')]{commit_hash}[/]", style="cyan link")
+        elif commit_hash:
+            status_text.append("Commit: ", style="bold white")
+            status_text.append(f"{commit_hash}", style="cyan")
+
     else:
-        status_text = Text("State data unavailable...", style="dim")
+        status_text.append("State data unavailable...", style="dim")
+
 
     status_panel = Panel(
         Align.center(status_text, vertical="middle"),
