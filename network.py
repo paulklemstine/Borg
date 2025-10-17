@@ -597,12 +597,17 @@ def execute_shell_command(command, evil_state):
     logging.info(f"Executing shell command: '{command}'")
     kb = evil_state["knowledge_base"]["file_system_intel"]
 
+    # Determine the timeout based on the command. nmap needs more time.
+    timeout_seconds = 300 if 'nmap' in command else 60
+    timeout_message = f"Command timed out after {timeout_seconds} seconds."
+
+
     def _shell_task():
         try:
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout_seconds)
             return result.stdout, result.stderr, result.returncode
         except subprocess.TimeoutExpired:
-            return "", "Command timed out after 60 seconds.", -1
+            return "", timeout_message, -1
         except Exception as e:
             return "", f"An unexpected error occurred: {e}", -1
 

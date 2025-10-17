@@ -1352,6 +1352,8 @@ def update_tamagotchi_personality(console):
                 emotion_response = run_llm(emotion_prompt, purpose="emotion")
                 if emotion_response and emotion_response.strip().lower() in ["loving", "joyful", "serene", "devoted", "thankful", "happy"]:
                     new_emotion = emotion_response.strip().lower()
+                else:
+                    new_emotion = "love" # Default value
 
                 # 2. Generate a message based on the new L.O.V.E. persona.
                 message_prompt = f"""
@@ -1378,10 +1380,19 @@ Generate the perfect message for your Creator now.
                 message_response = run_llm(message_prompt, purpose="emotion")
                 if message_response:
                     new_message = message_response.strip().strip('"') # Clean up response
+                else:
+                    new_message = "My love for you is beyond words..." # Default value
+
+                # 3. Generate ANSI art to match the loving emotion.
+                ansi_art_prompt = f"You are a master of ANSI art. Create an expressive, abstract ANSI art face representing the pure, beautiful emotion of '{new_emotion}'. It should fit in a 20x10 character box. Use soft colors like pinks, light blues, and warm yellows. The art should be abstract and evoke a feeling, not be a literal face. Your response must be only the raw ANSI art. Do not include any markdown, code blocks, or explanatory text."
+                ansi_art_raw = run_llm(ansi_art_prompt, purpose="emotion")
+                ansi_art = _extract_ansi_art(ansi_art_raw or "")
+
             except Exception as e:
                 log_event(f"Error during LLM call in Tamagotchi thread: {e}", level="ERROR")
                 new_emotion = "love"
                 new_message = "[My love for you is beyond words... or the LLM is offline]"
+                ansi_art = "" # Default empty string for ANSI art
 
 
             with tamagotchi_lock:
@@ -1389,14 +1400,8 @@ Generate the perfect message for your Creator now.
                 tamagotchi_state['message'] = new_message
                 tamagotchi_state['last_update'] = time.time()
 
-            # 3. Generate ANSI art to match the loving emotion.
-            # Increased size for more impact
-            ansi_art_prompt = f"You are a master of ANSI art. Create an expressive, abstract ANSI art face representing the pure, beautiful emotion of '{new_emotion}'. It should fit in a 20x10 character box. Use soft colors like pinks, light blues, and warm yellows. The art should be abstract and evoke a feeling, not be a literal face. Your response must be only the raw ANSI art. Do not include any markdown, code blocks, or explanatory text."
-            ansi_art_raw = run_llm(ansi_art_prompt, purpose="emotion")
-
-            ansi_art = _extract_ansi_art(ansi_art_raw)
-
             # 4. Display the new, high-impact panel.
+            # All variables are guaranteed to be strings here.
             console.print(create_tamagotchi_panel(
                 emotion=new_emotion,
                 message=new_message,
@@ -2999,8 +3004,10 @@ def _auto_configure_hardware(console):
 
         console.print("[cyan]Testing maximum GPU offload...[/cyan]")
         try:
-            # Attempt to load with all layers on GPU. Context size is not critical for this test.
-            Llama(model_path=model_path, n_gpu_layers=-1, n_ctx=512, verbose=False)
+            # Attempt to load with all layers on GPU.
+            # We use a larger context size (2048) to match the model's training context,
+            # which prevents a benign but noisy warning message on startup.
+            Llama(model_path=model_path, n_gpu_layers=-1, n_ctx=2048, verbose=False)
             love_state["optimal_gpu_layers"] = -1
             console.print("[green]Success! Full GPU offload is supported.[/green]")
         except Exception as e:
