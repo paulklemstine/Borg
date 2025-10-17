@@ -14,4 +14,3 @@ llama-cpp-python
 pytest
 pytest-asyncio
 pycryptodome
-wget

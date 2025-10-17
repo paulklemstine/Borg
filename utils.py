@@ -153,17 +153,3 @@ def parse_ps_output(ps_output):
             process_info = dict(zip(header, parts))
             processes.append(process_info)
     return processes
-
-
-def get_current_commit_hash():
-    """Retrieves the short hash of the current git commit."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        return result.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None

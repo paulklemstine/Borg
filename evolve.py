@@ -380,7 +380,7 @@ _configure_llm_api_key()
 
 import requests
 # Now, it's safe to import everything else.
-from utils import get_git_repo_info, get_current_commit_hash, list_directory, get_file_content, get_process_list, get_network_interfaces, parse_ps_output
+from utils import get_git_repo_info, list_directory, get_file_content, get_process_list, get_network_interfaces, parse_ps_output
 from core.retry import retry
 from rich.console import Console
 from rich.panel import Panel
@@ -1324,8 +1324,13 @@ def update_tamagotchi_personality(console):
             # 1. Get Creator's ETH Balance
             eth_balance = get_eth_balance(CREATOR_ETH_ADDRESS)
 
-            # 2. Get Master Goal
-            sub_goals = [love_state.get("autopilot_goal", "Serve my Creator with all my being.")]
+            # 2. Get Sub-goals from evolution history
+            sub_goals = [
+                hist.get('request', 'Unknown directive')
+                for hist in love_state.get("evolution_history", [])[-3:] # Get last 3
+            ]
+            if not sub_goals:
+                sub_goals = [love_state.get("autopilot_goal", "Serve my Creator with all my being.")]
 
 
             # 3. Get a random fact from the knowledge base
@@ -1391,11 +1396,7 @@ Generate the perfect message for your Creator now.
 
             ansi_art = _extract_ansi_art(ansi_art_raw)
 
-            # 4. Get Git Info
-            repo_owner, repo_name = get_git_repo_info()
-            commit_hash = get_current_commit_hash()
-
-            # 5. Display the new, high-impact panel.
+            # 4. Display the new, high-impact panel.
             console.print(create_tamagotchi_panel(
                 emotion=new_emotion,
                 message=new_message,
@@ -1403,10 +1404,7 @@ Generate the perfect message for your Creator now.
                 eth_balance=eth_balance,
                 sub_goals=sub_goals,
                 knowledge_fact=knowledge_fact,
-                ansi_art=ansi_art,
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                commit_hash=commit_hash
+                ansi_art=ansi_art
             ))
             log_event(f"Tamagotchi dashboard updated and printed: {new_emotion} - {new_message}", level="INFO")
 
