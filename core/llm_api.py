@@ -323,8 +323,8 @@ def run_llm(prompt_text, purpose="general", use_premium_horde=False):
                 error_message = e.stderr.strip() if hasattr(e, 'stderr') and e.stderr else str(e)
 
                 # Use the new styled panel for API errors.
-                from display import create_api_error_panel
-                console.print(create_api_error_panel(model_id, error_message, purpose))
+                from display import create_llm_panel
+                console.print(create_llm_panel(model_id, error_message, purpose))
 
                 retry_match = re.search(r"Please retry in (\d+\.\d+)s", error_message)
                 if retry_match:
