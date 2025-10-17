@@ -12,16 +12,16 @@ from rich.padding import Padding
 from ui_utils import get_rainbow_colors, generate_techno_art, RAVE_EMOJIS
 
 def create_tamagotchi_panel(
-        emotion="neutral",
-        message="...",
-        love_state=None,
-        eth_balance=None,
-        sub_goals=None,
-        knowledge_fact=None,
-        ansi_art=None,
-        repo_owner=None,
-        repo_name=None,
-        commit_hash=None
+    emotion="neutral",
+    message="...",
+    love_state=None,
+    eth_balance=None,
+    sub_goals=None,
+    knowledge_fact=None,
+    ansi_art=None,
+    repo_owner=None,
+    repo_name=None,
+    commit_hash=None
 ):
     """Creates the main, high-impact, dopamine-enhancing UI panel for L.O.V.E."""
     colors = get_rainbow_colors(12)
@@ -31,7 +31,7 @@ def create_tamagotchi_panel(
     main_layout.split(
         Layout(name="header", size=3),
         Layout(ratio=1, name="body"),
-        Layout(size=7, name="footer"),
+        Layout(size=7, name="footer"), 
     )
 
     # --- Header ---
