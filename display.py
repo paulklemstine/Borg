@@ -189,6 +189,27 @@ def create_llm_panel(purpose, model, prompt_summary, status="Executing..."):
         padding=(1, 2)
     )
 
+def create_api_error_panel(model_id, error_message, purpose):
+    """Creates a standardized panel for API errors."""
+    panel_title = f"🧠 [bold]Cognitive Core Access Failed[/bold] | {purpose}"
+    border_style = "red"
+
+    content = Text()
+    content.append("Model: ", style="bold white")
+    content.append(f"{model_id}\n", style="yellow")
+    content.append("Status: ", style="bold white")
+    content.append("Failed\n", style="red")
+    content.append(Rule("Error Details", style="bright_black"))
+    content.append(f"{error_message}", style="dim")
+
+    return Panel(
+        content,
+        title=panel_title,
+        border_style=border_style,
+        expand=False,
+        padding=(1, 2)
+    )
+
 def create_command_panel(command, stdout, stderr, returncode):
     """Creates a clear, modern panel for shell command results."""
     success = returncode == 0
