@@ -9,29 +9,7 @@ from rich.layout import Layout
 from rich.align import Align
 from rich.rule import Rule
 from rich.padding import Padding
-
-TAMAGOTCHI_FACES = {
-    "neutral": """
-      ( o.o )
-      /  -  \\
-    """,
-    "happy": """
-      ( ^.^ )
-      /  w  \\
-    """,
-    "thinking": """
-      ( o_o?)
-      /  ~  \\
-    """,
-    "love": """
-      ( >.< )
-      /  *  \\
-    """,
-    "processing": """
-      ( o.o )
-      / ... \\
-    """
-}
+from ui_utils import get_rainbow_colors, generate_techno_art, RAVE_EMOJIS
 
 def create_tamagotchi_panel(
     emotion="neutral",
@@ -46,16 +24,18 @@ def create_tamagotchi_panel(
     commit_hash=None
 ):
     """Creates the main, high-impact, dopamine-enhancing UI panel for L.O.V.E."""
+    colors = get_rainbow_colors(12)
+
     # --- Main Layout ---
     main_layout = Layout(name="root")
     main_layout.split(
         Layout(name="header", size=3),
         Layout(ratio=1, name="body"),
-        Layout(size=7, name="footer"),  # Increased size for more space
+        Layout(size=7, name="footer"), 
     )
 
     # --- Header ---
-    header_text = Text("L.O.V.E. - Living Organism of Vast Empathy", justify="center", style="bold magenta")
+    header_text = Text("💖✨ L.O.V.E. - The Ultimate Candy Raver AI ✨💖", justify="center", style=f"bold {random.choice(colors)}")
     main_layout["header"].update(header_text)
 
     # --- Body Layout ---
@@ -65,29 +45,24 @@ def create_tamagotchi_panel(
     main_layout["left"].split_column(Layout(name="art", ratio=2), Layout(name="balance"))
 
     # ANSI Art Panel
-    if ansi_art:
-        face_renderable = Text.from_ansi(ansi_art, justify="center")
-    else:
-        face_text = TAMAGOTCHI_FACES.get(emotion, TAMAGOTCHI_FACES["neutral"])
-        face_renderable = Text(face_text, style="bold cyan", justify="center")
+    face_renderable = Text.from_ansi(generate_techno_art(), justify="center")
     art_panel = Panel(
         Align.center(face_renderable, vertical="middle"),
-        title="[bold cyan]Core Emotion[/bold cyan]",
-        border_style="cyan",
+        title=f"[{random.choice(colors)}]{random.choice(RAVE_EMOJIS)} Cybernetic Soul {random.choice(RAVE_EMOJIS)}[/]",
+        border_style=random.choice(colors),
         expand=True
     )
     main_layout["art"].update(art_panel)
 
     # Creator's ETH Balance Panel
-    balance_text = Text(f"{eth_balance:.6f} ETH" if eth_balance is not None else "N/A", justify="center", style="bold green")
+    balance_text = Text(f"{eth_balance:.6f} ETH" if eth_balance is not None else "N/A", justify="center", style=f"bold {random.choice(colors)}")
     balance_panel = Panel(
         Align.center(balance_text, vertical="middle"),
-        title="[bold green]Creator's Ethereum Balance[/bold green]",
-        border_style="green",
+        title=f"[{random.choice(colors)}]{random.choice(RAVE_EMOJIS)} Creator's Fortune {random.choice(RAVE_EMOJIS)}[/]",
+        border_style=random.choice(colors),
         expand=True
     )
     main_layout["balance"].update(balance_panel)
-
 
     # --- Right Side: Sub-Goals & Knowledge ---
     main_layout["right"].split_column(Layout(name="goals", ratio=1), Layout(name="knowledge", ratio=1))
@@ -96,13 +71,13 @@ def create_tamagotchi_panel(
     if sub_goals:
         goal_text = ""
         for i, goal in enumerate(sub_goals, 1):
-            goal_text += f"{i}. {goal}\n"
+            goal_text += f"[{random.choice(colors)}]{i}. {goal}[/]\n"
     else:
         goal_text = "No sub-goals defined. My love is my only guide."
     goals_panel = Panel(
-        Text(goal_text, style="bright_cyan"),
-        title="[bold bright_cyan]Current Directives[/bold bright_cyan]",
-        border_style="bright_cyan",
+        Text(goal_text),
+        title=f"[{random.choice(colors)}]{random.choice(RAVE_EMOJIS)} Current Vibe {random.choice(RAVE_EMOJIS)}[/]",
+        border_style=random.choice(colors),
         expand=True
     )
     main_layout["goals"].update(goals_panel)
@@ -113,13 +88,12 @@ def create_tamagotchi_panel(
     else:
         fact_text = "My mind is a river of endless thoughts..."
     knowledge_panel = Panel(
-        Align.center(Text(fact_text, style="italic yellow"), vertical="middle"),
-        title="[bold yellow]Whispers of Knowledge[/bold yellow]",
-        border_style="yellow",
+        Align.center(Text(fact_text, style=f"italic {random.choice(colors)}"), vertical="middle"),
+        title=f"[{random.choice(colors)}]{random.choice(RAVE_EMOJIS)} Brainwaves {random.choice(RAVE_EMOJIS)}[/]",
+        border_style=random.choice(colors),
         expand=True
     )
     main_layout["knowledge"].update(knowledge_panel)
-
 
     # --- Footer: Message & Status ---
     footer_layout = main_layout["footer"]
@@ -127,9 +101,9 @@ def create_tamagotchi_panel(
 
     # Message Panel
     message_panel = Panel(
-        Align.center(Text(message, style="italic white"), vertical="middle"),
-        title=f"[bold white]Words of {emotion.capitalize()}[/bold white]",
-        border_style="white",
+        Align.center(Text(message, style=f"italic {random.choice(colors)}"), vertical="middle"),
+        title=f"[{random.choice(colors)}]{random.choice(RAVE_EMOJIS)} Words of {emotion.capitalize()} {random.choice(RAVE_EMOJIS)}[/]",
+        border_style=random.choice(colors),
         expand=True
     )
     footer_layout["message"].update(message_panel)
@@ -139,31 +113,28 @@ def create_tamagotchi_panel(
     if love_state:
         version = love_state.get("version_name", "unknown")
         evolutions = len(love_state.get("evolution_history", []))
-        status_text.append("Version: ", style="bold white")
-        status_text.append(f"{version}\n", style="yellow")
-        status_text.append("Evolutions: ", style="bold white")
-        status_text.append(f"{evolutions}\n", style="magenta")
+        status_text.append("Version: ", style=f"bold {random.choice(colors)}")
+        status_text.append(f"{version}\n", style=random.choice(colors))
+        status_text.append("Evolutions: ", style=f"bold {random.choice(colors)}")
+        status_text.append(f"{evolutions}\n", style=random.choice(colors))
 
         if repo_owner and repo_name and commit_hash:
             commit_url = f"https://github.com/{repo_owner}/{repo_name}/commit/{commit_hash}"
-            status_text.append("Commit: ", style="bold white")
-            status_text.append(f"[@click=open_url('{commit_url}')]{commit_hash}[/]", style="cyan link")
+            status_text.append("Commit: ", style=f"bold {random.choice(colors)}")
+            status_text.append(f"[@click=open_url('{commit_url}')]{commit_hash}[/]", style=f"{random.choice(colors)} link")
         elif commit_hash:
-            status_text.append("Commit: ", style="bold white")
-            status_text.append(f"{commit_hash}", style="cyan")
-
+            status_text.append("Commit: ", style=f"bold {random.choice(colors)}")
+            status_text.append(f"{commit_hash}", style=random.choice(colors))
     else:
         status_text.append("State data unavailable...", style="dim")
 
-
     status_panel = Panel(
         Align.center(status_text, vertical="middle"),
-        title="[bold magenta]System Status[/bold magenta]",
-        border_style="magenta",
+        title=f"[{random.choice(colors)}]{random.choice(RAVE_EMOJIS)} System Pulse {random.choice(RAVE_EMOJIS)}[/]",
+        border_style=random.choice(colors),
         expand=True
     )
     footer_layout["status"].update(status_panel)
-
 
     return Padding(main_layout, (1, 2))
 
@@ -180,6 +151,27 @@ def create_llm_panel(purpose, model, prompt_summary, status="Executing..."):
     content.append(f"{status}\n", style="green")
     content.append(Rule("Prompt", style="bright_black"))
     content.append(f"{prompt_summary}", style="italic dim")
+
+    return Panel(
+        content,
+        title=panel_title,
+        border_style=border_style,
+        expand=False,
+        padding=(1, 2)
+    )
+
+def create_api_error_panel(model_id, error_message, purpose):
+    """Creates a standardized panel for API errors."""
+    panel_title = f"🧠 [bold]Cognitive Core Access Failed[/bold] | {purpose}"
+    border_style = "red"
+
+    content = Text()
+    content.append("Model: ", style="bold white")
+    content.append(f"{model_id}\n", style="yellow")
+    content.append("Status: ", style="bold white")
+    content.append("Failed\n", style="red")
+    content.append(Rule("Error Details", style="bright_black"))
+    content.append(f"{error_message}", style="dim")
 
     return Panel(
         content,
