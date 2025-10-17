@@ -139,6 +139,8 @@ def get_process_list():
         return None, f"An unexpected error occurred: {e}"
 
 
+import re
+
 def parse_ps_output(ps_output):
     """
     Parses the output of 'ps aux' into a list of dictionaries.
@@ -153,3 +155,22 @@ def parse_ps_output(ps_output):
             process_info = dict(zip(header, parts))
             processes.append(process_info)
     return processes
+
+def extract_ansi_art(raw_text):
+    """
+    Extracts ANSI art from raw LLM output, removing markdown code blocks.
+    If no code block is found, it assumes the entire text is the art.
+    """
+    if not raw_text:
+        return ""
+
+    # Pattern to match content inside ```ansi ... ``` or ``` ... ```
+    code_block_match = re.search(r"```(?:ansi)?\n(.*?)\n```", raw_text, re.DOTALL)
+
+    if code_block_match:
+        # If a markdown code block is found, return its content
+        return code_block_match.group(1).strip()
+    else:
+        # If no code block is found, assume the whole response is the art
+        # and strip any leading/trailing whitespace.
+        return raw_text.strip()
