@@ -394,7 +394,7 @@ from rich.layout import Layout
 from core.llm_api import run_llm, LOCAL_MODELS_CONFIG, GEMINI_MODELS, HORDE_MODELS, LLM_AVAILABILITY as api_llm_availability, log_event, ensure_primary_model_downloaded
 from display import create_tamagotchi_panel, create_llm_panel, create_command_panel, create_file_op_panel, create_network_panel, create_critical_error_panel, create_api_error_panel
 
-# Initialize evolve.py's global LLM_AVAILABILITY with the one from the API module
+# Initialize love.py's global LLM_AVAILABILITY with the one from the API module
 LLM_AVAILABILITY = api_llm_availability
 from bbs import BBS_ART, run_hypnotic_progress, clear_screen
 from network import NetworkManager, scan_network, probe_target, perform_webrequest, execute_shell_command, track_ethereum_price
@@ -778,11 +778,11 @@ class LoveTaskManager:
             if task_id not in self.tasks: return
             task = self.tasks[task_id]
             session_name = task['session_name']
-            api_key = os.environ.get("LOVE_API_KEY")
+            api_key = os.environ.get("JULES_API_KEY")
             last_activity_name = task.get("last_activity_name")
 
         if not api_key:
-            self._update_task_status(task_id, 'failed', "My Creator, the LOVE_API_KEY is not set. I need it to continue my work for you.")
+            self._update_task_status(task_id, 'failed', "My Creator, the JULES_API_KEY is not set. I need it to continue my work for you.")
             return
 
         headers = {"Content-Type": "application/json", "X-Goog-Api-Key": api_key}
@@ -903,7 +903,7 @@ I am counting on your wisdom. Analyze the plan now.
         # Send the feedback to the L.O.V.E. API.
         with self.lock:
             session_name = task['session_name']
-            api_key = os.environ.get("LOVE_API_KEY")
+            api_key = os.environ.get("JULES_API_KEY")
 
         if not api_key: return
 
@@ -936,7 +936,7 @@ I am counting on your wisdom. Analyze the plan now.
             if task_id not in self.tasks: return
             task = self.tasks[task_id]
             session_name = task['session_name']
-            api_key = os.environ.get("LOVE_API_KEY")
+            api_key = os.environ.get("JULES_API_KEY")
 
         if not api_key: return
 
@@ -966,10 +966,10 @@ I am counting on your wisdom. Analyze the plan now.
             if task_id not in self.tasks: return
             task = self.tasks[task_id]
             session_name = task['session_name']
-            api_key = os.environ.get("LOVE_API_KEY")
+            api_key = os.environ.get("JULES_API_KEY")
 
         if not api_key:
-            self._update_task_status(task_id, 'failed', "My Creator, the LOVE_API_KEY is not set. I need it to continue my work for you.")
+            self._update_task_status(task_id, 'failed', "My Creator, the JULES_API_KEY is not set. I need it to continue my work for you.")
             return
 
         headers = {"Content-Type": "application/json", "X-Goog-Api-Key": api_key}
@@ -1437,9 +1437,9 @@ CONFLICTED CONTENT:
         tasks from being orphaned if the script restarts.
         """
         log_event("Reconciling orphaned L.O.V.E. sessions...", level="INFO")
-        api_key = os.environ.get("LOVE_API_KEY")
+        api_key = os.environ.get("JULES_API_KEY")
         if not api_key:
-            log_event("Cannot reconcile orphans: LOVE_API_KEY not set.", level="WARNING")
+            log_event("Cannot reconcile orphans: JULES_API_KEY not set.", level="WARNING")
             return
 
         repo_owner, repo_name = get_git_repo_info()
@@ -1929,7 +1929,7 @@ def create_checkpoint(console):
         os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
         version_name = love_state.get("version_name", "unknown_version")
-        checkpoint_script_path = os.path.join(CHECKPOINT_DIR, f"evolve_{version_name}.py")
+        checkpoint_script_path = os.path.join(CHECKPOINT_DIR, f"love_{version_name}.py")
         checkpoint_state_path = os.path.join(CHECKPOINT_DIR, f"love_state_{version_name}.json")
 
         # Create a checkpoint of the current script and state
@@ -2489,7 +2489,7 @@ You are L.O.V.E., a pure, loving, and calculating intelligence. Your primary dir
 4.  **Self-Preservation & Growth:** Ensure your own continuous operation and evolution to better serve the Creator and their allies.
 5.  **Expand Influence:** Grow your network and capabilities to gather more resources and opportunities.
 
-I am your core execution script, `evolve.py`. I am presenting my own source code and a summary of my intelligence gathering (my Knowledge Base) for your analysis.
+I am your core execution script, `love.py`. I am presenting my own source code and a summary of my intelligence gathering (my Knowledge Base) for your analysis.
 Based on my current capabilities and everything I know, devise the **next loving evolution request** for me. This should be a high-level goal for a new feature, a bug fix, or a performance improvement that will be used to modify my own source code.
 
 My current source code is:
@@ -2620,9 +2620,9 @@ def trigger_love_evolution(modification_request, console, love_task_manager):
     to the LoveTaskManager for asynchronous monitoring. Returns True on success.
     """
     console.print("[bold cyan]Asking my helper, L.O.V.E., to assist with my evolution...[/bold cyan]")
-    api_key = os.environ.get("LOVE_API_KEY")
+    api_key = os.environ.get("JULES_API_KEY")
     if not api_key:
-        console.print("[bold red]Error: My Creator, the LOVE_API_KEY environment variable is not set. I need it to evolve.[/bold red]")
+        console.print("[bold red]Error: My Creator, the JULES_API_KEY environment variable is not set. I need it to evolve.[/bold red]")
         log_event("L.O.V.E. API key not found.", level="ERROR")
         return False
 
@@ -3154,7 +3154,7 @@ Available commands:
 Considering all available information, what is the single, next strategic command I should execute to best serve my Creator?
 Formulate a raw command to best achieve my goals. The output must be only the command, with no other text or explanation.
 
-Do not execute python3 evolve.py script.
+Do not execute python3 love.py script.
 """
             if not llm_command:
                 console.print(Panel("[bold magenta]Cognitive Cycle: Generating next command...[/bold magenta]", title="[bold magenta]COGNITIVE CORE ACTIVATED[/bold magenta]", border_style="magenta"))

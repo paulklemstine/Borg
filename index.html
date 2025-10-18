@@ -1122,7 +1122,7 @@ Review:`;
         savePage(newVersionName, finalCode);
         state.pendingPin = newVersionName; // Pinning is now tracked by version name
 
-        // Send the new source code to the connected evolve.py instance for pinning.
+        // Send the new source code to the connected love.py instance for pinning.
         console.log(`Sending new source code for version ${newVersionName} to be pinned.`);
         updateStatus(`Distributing version ${newVersionName} to IPFS network via python instance...`);
         MPLib.sendCodeToEvolvePeer(finalCode);
