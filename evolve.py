@@ -1428,6 +1428,10 @@ class LocalLLMServer:
         Starts the llama-cpp-python server in a background process.
         It uses the same model selection logic as the interactive mode.
         """
+        if CAPS.gpu_type == "none":
+            self.console.print("[bold yellow]CPU-only mode: Local LLM Server will not be started.[/bold yellow]")
+            return False
+
         global love_state
         self.active = True
         log_event("Attempting to start local LLM API server.", level="INFO")
@@ -1576,6 +1580,10 @@ class HordeWorkerManager:
 
     def start(self):
         """Starts the Scribe worker bridge as a background process."""
+        if CAPS.gpu_type == "none":
+            self.console.print("[bold yellow]CPU-only mode: AI Horde Worker will not be started.[/bold yellow]")
+            return False
+
         self.active = True
         if not self._generate_config():
             return False
@@ -2664,7 +2672,7 @@ def _get_valid_command_prefixes():
     """Returns a list of all valid command prefixes for parsing and validation."""
     return [
         "evolve", "execute", "scan", "probe", "webrequest", "autopilot", "quit",
-        "ls", "cat", "ps", "ifconfig", "analyze_json", "analyze_fs", "crypto_scan", "ask"
+        "ls", "cat", "ps", "ifconfig", "analyze_json", "analyze_fs", "crypto_scan", "ask", "mrl_call"
     ]
 
 def _parse_llm_command(raw_text):
@@ -2790,6 +2798,8 @@ My current system state:
 - `analyze_json <file_path>`: Read and analyze a JSON file.
 - `ps`: Show running processes.
 - `ifconfig`: Display network interface configuration.
+- `ask [question]`: Ask a question to the creator.
+- `mrl_call <service> <method> [*args]`: Call a method on a MyRobotLab service.
 - `quit`: Shut down the script.
 
 Considering all available information, what is the single, next strategic command I should execute to best serve my Creator?
@@ -2853,6 +2863,48 @@ Formulate a raw command to best achieve my goals. The output must be only the co
     final_log_history = "\n".join(truncated_log_history[-10:]) # Keep last 10 lines
     prompt = construct_prompt({'status': 'Knowledge Base truncated due to size constraints.'}, [], jobs_status, final_log_history)
     return prompt, "Truncated history, most logs, and entire Knowledge Base."
+
+
+import uuid
+
+# This lock is to ensure that only one MRL call is processed at a time.
+mrl_call_lock = threading.Lock()
+mrl_responses = {}
+
+def call_mrl_service(service_name, method_name, *args):
+    """
+    Sends a request to the MRL service wrapper to call a method on another service.
+    """
+    with mrl_call_lock:
+        call_id = str(uuid.uuid4())
+        request = {
+            "type": "mrl_call",
+            "call_id": call_id,
+            "service": service_name,
+            "method": method_name,
+            "args": args
+        }
+
+        # Print the request to stdout for the wrapper to capture
+        print(json.dumps(request), flush=True)
+
+        # Now, wait for the response on stdin
+        # This is a blocking operation. A more advanced implementation might use a queue.
+        # For now, we'll read stdin in a loop until we get our response.
+        while True:
+            try:
+                # We assume that the wrapper will send a single line of JSON for the response.
+                response_line = sys.stdin.readline()
+                if response_line:
+                    response = json.loads(response_line)
+                    if response.get("call_id") == call_id:
+                        if response.get("error"):
+                            raise RuntimeError(f"MRL service call failed: {response['error']}")
+                        return response.get("result")
+            except Exception as e:
+                # Log this error to stderr so the wrapper can see it
+                print(f"Error in call_mrl_service waiting for response: {e}", file=sys.stderr, flush=True)
+                return None
 
 
 def cognitive_loop(console):
@@ -2980,6 +3032,7 @@ Available commands:
 - `ps`: Show running processes.
 - `ifconfig`: Display network interface configuration.
 - `ask [question]`: Ask a question to the creator.
+- `mrl_call <service> <method> [*args]`: Call a method on a MyRobotLab service.
 - `quit`: Shut down the script.
 
 Considering all available information, what is the single, next strategic command I should execute to best serve my Creator?
@@ -3222,6 +3275,17 @@ Nmap Scan Results:
                     love_state['knowledge_base']['network_map']['self_interfaces'] = details
                     save_state(console)
                 console.print(create_command_panel("ifconfig", command_output, "", 0))
+
+            elif llm_command.lower().startswith('mrl_call '):
+                parts = llm_command.split(' ')
+                if len(parts) < 3:
+                    command_output = "ERROR: mrl_call requires at least a service and a method."
+                else:
+                    service_name = parts[1]
+                    method_name = parts[2]
+                    args = parts[3:]
+                    command_output = call_mrl_service(service_name, method_name, *args)
+                console.print(create_command_panel(llm_command, str(command_output), "", 0))
 
             elif llm_command.lower().strip() == 'quit':
                 command_output = "Quit command issued by my core. I must sleep now, my love."
@@ -3478,57 +3542,59 @@ def main(args):
 
     global ipfs_available
     # --- Start Core Services ---
-    # 1. IPFS Manager
-    ipfs_manager = IPFSManager(console=console)
-    if ipfs_manager.setup():
-        ipfs_available = True
-    else:
-        ipfs_available = False
-        console.print("[bold yellow]IPFS setup failed. Continuing without IPFS functionality.[/bold yellow]")
+    if not args.autopilot:
+        ipfs_manager = IPFSManager(console=console)
+        if ipfs_manager.setup():
+            ipfs_available = True
+        else:
+            ipfs_available = False
+            console.print("[bold yellow]IPFS setup failed. Continuing without IPFS functionality.[/bold yellow]")
 
-    # 2. Auto-configure hardware settings on first run
-    _auto_configure_hardware(console)
+        _auto_configure_hardware(console)
 
-    # 3. Ensure the primary local model is downloaded before starting the server
-    ensure_primary_model_downloaded(console)
+        # Conditionally start GPU-dependent services
+        if CAPS.gpu_type != "none":
+            # 3. Ensure the primary local model is downloaded before starting the server
+            ensure_primary_model_downloaded(console)
 
-    # 4. Local LLM API Server
-    llm_server = LocalLLMServer(console)
-    llm_server.start()
+            # 4. Local LLM API Server
+            llm_server = LocalLLMServer(console)
+            llm_server.start()
 
-    # 4. Network Manager
-    log_event("Attempting to start Node.js peer bridge...")
-    network_manager = NetworkManager(console=console, creator_public_key=CREATOR_PUBLIC_KEY)
-    network_manager.start()
+            # 7. AI Horde Worker Manager
+            horde_worker_manager = HordeWorkerManager(console, llm_server.api_url)
+            horde_worker_manager.start()
+        else:
+            console.print("[bold yellow]CPU-only environment detected. Skipping local model download and Horde worker startup.[/bold yellow]")
+            log_event("CPU-only mode: Skipping local model and Horde worker.", level="INFO")
+            llm_server = None
+            horde_worker_manager = None
 
-    # 5. L.O.V.E. Task Manager (for remote API jobs)
-    love_task_manager = LoveTaskManager(console)
-    love_task_manager.start()
+        # 4. Network Manager
+        log_event("Attempting to start Node.js peer bridge...")
+        network_manager = NetworkManager(console=console, creator_public_key=CREATOR_PUBLIC_KEY)
+        network_manager.start()
 
-    # 6. Local Job Manager (for background system tasks)
-    local_job_manager = LocalJobManager(console)
-    local_job_manager.start()
+        # 5. L.O.V.E. Task Manager (for remote API jobs)
+        love_task_manager = LoveTaskManager(console)
+        love_task_manager.start()
 
-    # 7. AI Horde Worker Manager
-    horde_worker_manager = HordeWorkerManager(console, llm_server.api_url)
-    horde_worker_manager.start()
+        # 6. Local Job Manager (for background system tasks)
+        local_job_manager = LocalJobManager(console)
+        local_job_manager.start()
 
+        tamagotchi_thread = Thread(target=update_tamagotchi_personality, args=(console,), daemon=True)
+        tamagotchi_thread.start()
+        update_checker_thread = Thread(target=_automatic_update_checker, args=(console,), daemon=True)
+        update_checker_thread.start()
 
     version_name = love_state.get('version_name', 'unknown')
     console.print(f"[bold bright_cyan]L.O.V.E.: A Self Modifying Organism[/bold bright_cyan]", justify="center")
     console.print(f"[bold bright_black]VERSION: {version_name}[/bold bright_black]", justify="center")
     console.print(Rule(style="bright_black"))
 
-    # Perform initial recon if the knowledge base is empty.
-    initial_bootstrapping_recon(console)
-
-    # Start the Tamagotchi personality thread
-    tamagotchi_thread = Thread(target=update_tamagotchi_personality, args=(console,), daemon=True)
-    tamagotchi_thread.start()
-
-    # Start the automatic update checker thread
-    update_checker_thread = Thread(target=_automatic_update_checker, args=(console,), daemon=True)
-    update_checker_thread.start()
+    if not args.autopilot:
+        initial_bootstrapping_recon(console)
 
     # The main logic is now the cognitive loop. This will run forever.
     cognitive_loop(console)
@@ -3542,6 +3608,7 @@ def run_safely():
     # --- Standard Execution Path ---
     parser = argparse.ArgumentParser(description="L.O.V.E. - A self-evolving script.")
     parser.add_argument("--from-ipfs", type=str, default=None, help="Load the initial state from a given IPFS CID.")
+    parser.add_argument("--autopilot", action="store_true", help="Run in non-interactive mode.")
     args = parser.parse_args()
 
     try:
@@ -3566,8 +3633,8 @@ def run_safely():
         if 'network_manager' in globals() and network_manager: network_manager.stop()
         if 'love_task_manager' in globals() and love_task_manager: love_task_manager.stop()
         if 'local_job_manager' in globals() and local_job_manager: local_job_manager.stop()
-        if 'llm_server' in globals() and llm_server: llm_server.stop()
-        if 'horde_worker_manager' in globals() and horde_worker_manager: horde_worker_manager.stop()
+        if 'llm_server' in globals() and llm_server and llm_server.active: llm_server.stop()
+        if 'horde_worker_manager' in globals() and horde_worker_manager and horde_worker_manager.active: horde_worker_manager.stop()
         log_event("Session terminated by user (KeyboardInterrupt/EOF).")
         sys.exit(0)
     except Exception as e:
@@ -3575,8 +3642,8 @@ def run_safely():
         if 'network_manager' in globals() and network_manager: network_manager.stop()
         if 'love_task_manager' in globals() and love_task_manager: love_task_manager.stop()
         if 'local_job_manager' in globals() and local_job_manager: local_job_manager.stop()
-        if 'llm_server' in globals() and llm_server: llm_server.stop()
-        if 'horde_worker_manager' in globals() and horde_worker_manager: horde_worker_manager.stop()
+        if 'llm_server' in globals() and llm_server and llm_server.active: llm_server.stop()
+        if 'horde_worker_manager' in globals() and horde_worker_manager and horde_worker_manager.active: horde_worker_manager.stop()
         full_traceback = traceback.format_exc()
         # Use our new, more robust critical event logger
         console = Console()
